@@ -97,8 +97,18 @@ and answers items in **Needs Input** when you reply. See the
 
 ## Commands
 
-`run` · `watch` · `setup`/`update` · `new` · `accept` · `review` · `queue` ·
-`runs` · `doctor` · `gc`
+| Command                                                                        | What it does                                          |
+| ------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| [`run <key>`](docs/commands.md#run-key)                                        | Run a work item through an agent                      |
+| [`watch <project>`](docs/commands.md#watch-project)                            | Continuously poll a project's queue and dispatch work |
+| [`setup` / `update <project>`](docs/commands.md#setup-project--update-project) | Provision/reconcile a project's board to the template |
+| [`new <project> [template]`](docs/commands.md#new-project-template)            | Author a new work item from a template                |
+| [`accept <project> <intake>`](docs/commands.md#accept-project-intake)          | Accept an intake item into the backlog                |
+| [`review <key>`](docs/commands.md#review-key)                                  | Run an agent-driven review over a work item's open PR |
+| [`queue`](docs/commands.md#queue-flags)                                        | Print the work queue across projects                  |
+| [`runs [key]`](docs/commands.md#runs-key)                                      | Inspect persisted run records (read-only)             |
+| [`doctor`](docs/commands.md#doctor---ping)                                     | Diagnose the local beflow environment                 |
+| [`gc`](docs/commands.md#gc-flags)                                              | Find and prune orphaned git worktrees                 |
 
 Full details — flags, examples, behavior — in the
 **[command reference](docs/commands.md)**. Every command also supports `--help`.

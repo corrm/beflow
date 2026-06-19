@@ -18,6 +18,42 @@ export const routingSchema = z
     })
     .optional();
 
+export const prOwnerSchema = z.enum(["beflow", "agent"]);
+
+export const prSchema = z
+    .object({
+        owner: prOwnerSchema.optional(),
+        baseBranch: z.string().optional(),
+    })
+    .optional();
+
+export const policyEvaluatorSchema = z.enum(["globs", "command", "off"]);
+export const policyDecisionSchema = z.enum(["block", "require_approval", "allow"]);
+export const policyOnBlockSchema = z.enum(["comment"]);
+
+export const policyRuleSchema = z.object({
+    paths: z.array(z.string()).optional(),
+    agent: z.string().optional(),
+    decision: policyDecisionSchema,
+});
+
+export const policySchema = z
+    .object({
+        evaluator: policyEvaluatorSchema.optional(),
+        command: z.array(z.string()).optional(),
+        rules: z.array(policyRuleSchema).optional(),
+        onBlock: policyOnBlockSchema.optional(),
+    })
+    .optional();
+
+export type PrConfig = z.infer<typeof prSchema>;
+export type PrOwner = z.infer<typeof prOwnerSchema>;
+export type PolicyConfig = z.infer<typeof policySchema>;
+export type PolicyEvaluator = z.infer<typeof policyEvaluatorSchema>;
+export type PolicyDecision = z.infer<typeof policyDecisionSchema>;
+export type PolicyOnBlock = z.infer<typeof policyOnBlockSchema>;
+export type PolicyRule = z.infer<typeof policyRuleSchema>;
+
 export const projectSchema = z.object({
     default_repo: z.string(),
     defaults: projectDefaultsSchema,
@@ -34,6 +70,8 @@ export const projectSchema = z.object({
     module_repo_map: z.record(z.string(), z.string()),
     name: z.string(),
     plane_project_id: z.string().optional(),
+    policy: policySchema,
+    pr: prSchema,
     qualityGate: z.object({ commands: z.array(z.string()).optional() }).optional(),
     repos: z.record(z.string(), z.string()),
     review: z.object({ enabled: z.boolean().optional(), postToPr: z.boolean().optional() }).optional(),
@@ -111,6 +149,11 @@ export const fileSchema = z.object({
         // Skips writeback so the human's move stands; `abort` additionally cancels
         // The agent mid-run. Always present after parse thanks to the default.
         onManualMove: z.enum(["yield", "abort"]).default("yield"),
+        // PR mechanics. `owner` decides whether beflow or the agent opens the PR
+        // (default `agent`, the current back-compat behavior); `baseBranch` is the
+        // Target branch (`auto` ⇒ detect the repo default branch at runtime).
+        // Per-project `projects.<KEY>.pr` overrides this global.
+        pr: prSchema,
         // Opt-in quality gate: project check command(s) run in the worktree before an
         // Implement `done` report opens a PR / advances to In Review. On RED beflow
         // Auto-reworks the live agent session once, then re-checks; still-red is failed.
@@ -152,6 +195,12 @@ export const fileSchema = z.object({
     // Directory of user-editable prompt templates that override the compiled-in
     // Defaults. `~` expands to home; each `<name>.md` overrides that prompt.
     prompts: z.object({ dir: z.string() }).optional(),
+    // Opt-in post-run policy gate. `evaluator` selects how a finished run's diff is
+    // Judged before its PR is accepted: `globs` matches changed paths against `rules`,
+    // `command` shells out to an external argv, `off` disables the gate (default).
+    // `onBlock` is how a block surfaces (only `comment` for now). Per-project
+    // `projects.<KEY>.policy` overrides this global wholesale.
+    policy: policySchema,
     workspace: workspaceSchema,
     projects: z.record(z.string(), projectSchema),
     agents: agentsMapSchema.optional(),

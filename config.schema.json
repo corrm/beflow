@@ -85,6 +85,19 @@
               "enum": ["yield", "abort"],
               "default": "yield"
             },
+            "pr": {
+              "type": "object",
+              "properties": {
+                "owner": {
+                  "type": "string",
+                  "enum": ["beflow", "agent"]
+                },
+                "baseBranch": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
             "qualityGate": {
               "type": "object",
               "properties": {
@@ -201,6 +214,49 @@
           "required": ["dir"],
           "additionalProperties": false
         },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "evaluator": {
+              "type": "string",
+              "enum": ["globs", "command", "off"]
+            },
+            "command": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "paths": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "agent": {
+                    "type": "string"
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": ["block", "require_approval", "allow"]
+                  }
+                },
+                "required": ["decision"],
+                "additionalProperties": false
+              }
+            },
+            "onBlock": {
+              "type": "string",
+              "enum": ["comment"]
+            }
+          },
+          "additionalProperties": false
+        },
         "workspace": {
           "type": "object",
           "properties": {
@@ -288,6 +344,62 @@
               },
               "plane_project_id": {
                 "type": "string"
+              },
+              "policy": {
+                "type": "object",
+                "properties": {
+                  "evaluator": {
+                    "type": "string",
+                    "enum": ["globs", "command", "off"]
+                  },
+                  "command": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "rules": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "paths": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "agent": {
+                          "type": "string"
+                        },
+                        "decision": {
+                          "type": "string",
+                          "enum": ["block", "require_approval", "allow"]
+                        }
+                      },
+                      "required": ["decision"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "onBlock": {
+                    "type": "string",
+                    "enum": ["comment"]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "pr": {
+                "type": "object",
+                "properties": {
+                  "owner": {
+                    "type": "string",
+                    "enum": ["beflow", "agent"]
+                  },
+                  "baseBranch": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
               },
               "qualityGate": {
                 "type": "object",

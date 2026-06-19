@@ -1,5 +1,5 @@
-import type { Project } from "../config/schema.ts";
-import type { IssueMeta, JobKind, Resolved, RunMode, StateGroup } from "../model/types.ts";
+import type { Config, Project, Registry } from "../config/schema.ts";
+import type { IssueMeta, JobKind, ResolvedPolicy, ResolvedPr, Resolved, RunMode, StateGroup } from "../model/types.ts";
 import { autoDetectJobKind } from "./jobkind.ts";
 
 export interface ResolveInputs {
@@ -89,6 +89,40 @@ export function resolveJobKind(inputs: ResolveInputs): JobKind {
         cascade(inputs.cli.jobKind, inputs.meta.jobKind) ??
         autoDetectJobKind(inputs.issue.type, inputs.issue.state.group)
     );
+}
+
+const PR_OWNER_BUILTIN: ResolvedPr["owner"] = "agent";
+const PR_BASE_BRANCH_BUILTIN = "auto";
+const POLICY_EVALUATOR_BUILTIN: ResolvedPolicy["evaluator"] = "off";
+const POLICY_ON_BLOCK_BUILTIN: ResolvedPolicy["onBlock"] = "comment";
+
+/**
+ * Project-over-default resolution of PR mechanics. A present `projects.<KEY>.pr`
+ * replaces `defaults.pr` wholesale (no field merge); the built-in defaults
+ * (`agent` / `auto`) then fill any field the chosen block leaves unset.
+ */
+export function resolvePr(config: Config, registry: Registry, projectKey: string): ResolvedPr {
+    const block = registry.projects[projectKey]?.pr ?? config.defaults.pr;
+    return {
+        owner: block?.owner ?? PR_OWNER_BUILTIN,
+        baseBranch: block?.baseBranch ?? PR_BASE_BRANCH_BUILTIN,
+    };
+}
+
+/**
+ * Project-over-default resolution of the post-run policy gate. A present
+ * `projects.<KEY>.policy` replaces the top-level `policy` wholesale (no field
+ * merge); the built-in defaults (evaluator `off`, onBlock `comment`) then fill
+ * any field the chosen block leaves unset.
+ */
+export function resolvePolicy(config: Config, registry: Registry, projectKey: string): ResolvedPolicy {
+    const block = registry.projects[projectKey]?.policy ?? config.policy;
+    return {
+        evaluator: block?.evaluator ?? POLICY_EVALUATOR_BUILTIN,
+        command: block?.command,
+        rules: block?.rules,
+        onBlock: block?.onBlock ?? POLICY_ON_BLOCK_BUILTIN,
+    };
 }
 
 export function resolve(inputs: ResolveInputs): Resolved {

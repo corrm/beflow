@@ -10,7 +10,25 @@
   },
   "defaults": {
     "agent": "claude",
-    "runMode": "supervised"
+    "runMode": "supervised",
+    "pr": {
+      "owner": "agent",
+      "baseBranch": "auto"
+    }
+  },
+  "policy": {
+    "evaluator": "globs",
+    "onBlock": "comment",
+    "rules": [
+      {
+        "paths": ["infra/**", "**/*.tf"],
+        "decision": "require_approval"
+      },
+      {
+        "paths": [".github/**"],
+        "decision": "block"
+      }
+    ]
   },
   "worktrees": {
     "dir": "~/.beflow/worktrees"

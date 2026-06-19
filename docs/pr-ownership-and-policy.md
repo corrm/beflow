@@ -1,9 +1,8 @@
 # PR ownership and policy
 
 This document covers two related features that ship together: **beflow-owned PR
-creation** (`defaults.pr.owner: "beflow"`) and the **post-run policy gate**
-(`policy`). Both are opt-in and affect only autonomous `implement` runs with a
-worktree.
+creation** (`pr.owner: "beflow"`) and the **post-run policy gate** (`policy`).
+Both are opt-in and affect only autonomous `implement` runs with a worktree.
 
 ---
 
@@ -27,11 +26,9 @@ updated to reflect the outcome in every case.
 Set this globally or per project:
 
 ```json
-"defaults": {
-  "pr": {
-    "owner": "beflow",
-    "baseBranch": "auto"
-  }
+"pr": {
+  "owner": "beflow",
+  "baseBranch": "auto"
 }
 ```
 
@@ -97,16 +94,14 @@ branch protection rules.
 
 ## Config reference
 
-### `defaults.pr`
+### `pr`
 
 Applies globally unless a project-level `pr` block overrides it wholesale.
 
 ```json
-"defaults": {
-  "pr": {
-    "owner": "agent",
-    "baseBranch": "auto"
-  }
+"pr": {
+  "owner": "agent",
+  "baseBranch": "auto"
 }
 ```
 
@@ -130,12 +125,13 @@ Applies globally unless a project-level `policy` block overrides it wholesale.
 }
 ```
 
-| Field       | Type                                | Description                                                                         |
-| ----------- | ----------------------------------- | ----------------------------------------------------------------------------------- |
-| `evaluator` | `"globs"` \| `"command"` \| `"off"` | How the policy is evaluated.                                                        |
-| `rules`     | `Rule[]`                            | Ordered list of match rules (used when `evaluator` is `"globs"`).                   |
-| `command`   | `string[]`                          | Command + args to invoke (used when `evaluator` is `"command"`).                    |
-| `onBlock`   | `"comment"`                         | Side-effect on a `block` decision. `"comment"` posts the block reason to the issue. |
+| Field             | Type                                                   | Description                                                                                              |
+| ----------------- | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `evaluator`       | `"globs"` \| `"agentowners"` \| `"command"` \| `"off"` | How the policy is evaluated.                                                                             |
+| `rules`           | `Rule[]`                                               | Ordered list of match rules (used when `evaluator` is `"globs"`).                                        |
+| `agentownersPath` | `string`                                               | Path to the AGENTOWNERS file (used when `evaluator` is `"agentowners"`). Default: `.github/AGENTOWNERS`. |
+| `command`         | `string[]`                                             | Command + args to invoke (used when `evaluator` is `"command"`).                                         |
+| `onBlock`         | `"comment"`                                            | Side-effect on a `block` decision. `"comment"` posts the block reason to the issue.                      |
 
 #### `policy.rules[]`
 
@@ -167,15 +163,57 @@ does not fire — the change falls through to the next rule, and ultimately towa
 }
 ```
 
-Rules are evaluated in order. The final catch-all rule (no filters) ensures
-every run gets an explicit decision.
+Rules are evaluated with most-restrictive-wins across all matched rules. The
+final catch-all rule (no filters) ensures every run gets an explicit decision.
+
+#### `evaluator: "agentowners"` example
+
+The `agentowners` evaluator reads a CODEOWNERS-style file and runs the same
+most-restrictive-wins engine as `globs`. It is the built-in alternative to
+wiring a custom `command` hook for path-based ownership policies.
+
+```json
+"policy": {
+  "evaluator": "agentowners",
+  "agentownersPath": ".github/AGENTOWNERS"
+}
+```
+
+**File format** — one rule per line: `<path-glob> <decision> [agent]`. `#`
+starts a comment; blank lines are ignored. `decision` must be one of `block`,
+`require_approval`, or `allow`. An optional third column scopes the rule to a
+specific agent name; extra columns are malformed.
+
+```
+# AGENTOWNERS — most-restrictive wins: block > require_approval > allow
+package.json        block
+**/*.lock           block
+infra/**            require_approval
+.github/**          require_approval
+src/**              allow              claude
+*                   allow
+```
+
+**Missing file** — if the file does not exist at the resolved path, the
+evaluator returns `allow` and logs the reason. A missing file is not an error.
+
+**Malformed file** — an invalid decision token or a line with extra columns
+causes a hard error: the run is parked as **failed** (fails closed). A broken
+policy file never silently degrades to an allow.
+
+**`agentownersPath` resolution** — a relative path is resolved against the
+run's worktree root; an absolute path is used as-is. Pointing `agentownersPath`
+at an absolute path outside the repo lets you keep the policy in a location the
+agent cannot edit in the same change it governs. A relative in-repo path (the
+default `.github/AGENTOWNERS`) is editable by the agent in the same change — if
+that matters for your threat model, use an out-of-repo absolute path, or switch
+to `evaluator: "command"` where you own the trust call entirely.
 
 #### `evaluator: "command"` example
 
-Use `"command"` to implement arbitrary policy logic — including AGENTOWNERS-style
-ownership files — behind a single hook. beflow is not opinionated about the
-format of the ownership file; the hook can implement whatever convention suits
-the repo.
+Use `"command"` to implement arbitrary policy logic behind a single hook.
+beflow is not opinionated about the format of the ownership file; the hook can
+implement whatever convention suits the repo.
 
 ```json
 "policy": {
@@ -225,6 +263,12 @@ workspace.
       "rules": [
         { "decision": "require_approval" }
       ]
+    }
+  },
+  "OPS": {
+    "policy": {
+      "evaluator": "agentowners",
+      "agentownersPath": ".github/AGENTOWNERS"
     }
   }
 }

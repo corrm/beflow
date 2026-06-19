@@ -99,7 +99,9 @@ the item is Done, so an interrupted run picks up where it left off.
 In `--auto` mode with `pr.owner: "beflow"` (the beflow-owned pipeline), beflow
 gates the issue before running the agent, then owns the full PR lifecycle —
 opening a draft, running the quality gate, evaluating post-run policy, and
-writing back to the board — without any `gh` call from the agent itself:
+writing back to the board — without any `gh` call from the agent itself. The
+post-run policy gate supports `globs`, `agentowners`, `command`, and `off`
+evaluators — see [PR ownership and policy](docs/pr-ownership-and-policy.md).
 
 ```mermaid
 flowchart TD

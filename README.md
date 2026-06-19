@@ -89,7 +89,8 @@ beflow drives a simple board and you steer from it:
 Backlog → Todo → In Progress → In Review → Done   (+ Needs Input, Cancelled)
 ```
 
-`beflow watch` polls the queue and dispatches Todo items up to your WIP limit,
+`beflow watch` polls the queue and dispatches Todo items up to your
+[WIP limit](docs/config.md#projects) (`limits.inProgress` / `limits.inReview`),
 advances merged PRs to **Done**, reworks items you label `changes-requested`,
 and answers items in **Needs Input** when you reply. See the
 [lifecycle](docs/lifecycle.md) and [operating model](docs/OPERATING-MODEL.md).

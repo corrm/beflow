@@ -781,6 +781,7 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                 },
                 resolvedPolicy,
                 policyExec,
+                cwd,
             );
         } catch (err) {
             log(

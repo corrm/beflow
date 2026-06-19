@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
-import { computeChangedFiles, evaluatePolicy } from "../src/core/policy.ts";
-import type { PolicyContext, PolicyExec } from "../src/core/policy.ts";
+import { computeChangedFiles, evaluatePolicy, parseAgentowners } from "../src/core/policy.ts";
+import type { PolicyContext, PolicyExec, PolicyReader } from "../src/core/policy.ts";
 import type { Exec } from "../src/core/worktree.ts";
 import type { ResolvedPolicy } from "../src/model/types.ts";
 
@@ -45,26 +45,27 @@ describe("evaluatePolicy globs", () => {
 
     it("allows when no rule matches", async () => {
         const policy = globsPolicy([{ decision: "block", paths: ["infra/**"] }]);
-        const res = await evaluatePolicy(contextWith({ changedFiles: ["src/a.ts"] }), policy, noopCmdExec);
+        const res = await evaluatePolicy(contextWith({ changedFiles: ["src/a.ts"] }), policy, noopCmdExec, "/wt");
         expect(res.decision).toBe("allow");
         expect(res.reason).toBe("no policy rule matched");
     });
 
     it("blocks when a single block rule matches a path", async () => {
         const policy = globsPolicy([{ decision: "block", paths: ["infra/**"] }]);
-        const res = await evaluatePolicy(contextWith({ changedFiles: ["infra/main.tf"] }), policy, noopCmdExec);
+        const res = await evaluatePolicy(contextWith({ changedFiles: ["infra/main.tf"] }), policy, noopCmdExec, "/wt");
         expect(res.decision).toBe("block");
         expect(res.reason).toContain("infra/**");
     });
 
     it("only fires an agent-scoped rule for the matching agent", async () => {
         const policy = globsPolicy([{ agent: "gpt", decision: "block", paths: ["src/**"] }]);
-        const claude = await evaluatePolicy(contextWith({ changedFiles: ["src/a.ts"] }), policy, noopCmdExec);
+        const claude = await evaluatePolicy(contextWith({ changedFiles: ["src/a.ts"] }), policy, noopCmdExec, "/wt");
         expect(claude.decision).toBe("allow");
         const gpt = await evaluatePolicy(
             contextWith({ agent: "gpt", changedFiles: ["src/a.ts"] }),
             policy,
             noopCmdExec,
+            "/wt",
         );
         expect(gpt.decision).toBe("block");
         expect(gpt.reason).toContain("agent=gpt");
@@ -72,7 +73,7 @@ describe("evaluatePolicy globs", () => {
 
     it("matches a rule with no paths against any change", async () => {
         const policy = globsPolicy([{ agent: "claude", decision: "require_approval" }]);
-        const res = await evaluatePolicy(contextWith({ changedFiles: ["anything"] }), policy, noopCmdExec);
+        const res = await evaluatePolicy(contextWith({ changedFiles: ["anything"] }), policy, noopCmdExec, "/wt");
         expect(res.decision).toBe("require_approval");
     });
 
@@ -82,7 +83,7 @@ describe("evaluatePolicy globs", () => {
             { decision: "require_approval", paths: ["src/**"] },
             { decision: "block", paths: ["src/**"] },
         ]);
-        const res = await evaluatePolicy(contextWith({ changedFiles: ["src/a.ts"] }), policy, noopCmdExec);
+        const res = await evaluatePolicy(contextWith({ changedFiles: ["src/a.ts"] }), policy, noopCmdExec, "/wt");
         expect(res.decision).toBe("block");
     });
 
@@ -91,7 +92,7 @@ describe("evaluatePolicy globs", () => {
             { decision: "allow", paths: ["src/**"] },
             { decision: "require_approval", paths: ["src/**"] },
         ]);
-        const res = await evaluatePolicy(contextWith({ changedFiles: ["src/a.ts"] }), policy, noopCmdExec);
+        const res = await evaluatePolicy(contextWith({ changedFiles: ["src/a.ts"] }), policy, noopCmdExec, "/wt");
         expect(res.decision).toBe("require_approval");
     });
 });
@@ -110,7 +111,7 @@ describe("evaluatePolicy command", () => {
             return { exitCode: 0, stderr: "", stdout: '{"decision":"require_approval","reason":"needs review"}' };
         };
         const context = contextWith({ changedFiles: ["src/a.ts"] });
-        const res = await evaluatePolicy(context, commandPolicy(["policy.sh"]), exec);
+        const res = await evaluatePolicy(context, commandPolicy(["policy.sh"]), exec, "/wt");
         expect(seenArgv).toEqual(["policy.sh"]);
         expect(JSON.parse(seenStdin)).toEqual(context);
         expect(res).toEqual({ decision: "require_approval", reason: "needs review" });
@@ -118,21 +119,23 @@ describe("evaluatePolicy command", () => {
 
     it("throws on garbage (non-JSON) output", async () => {
         const exec: PolicyExec = async () => ({ exitCode: 0, stderr: "", stdout: "not json" });
-        expect(evaluatePolicy(contextWith(), commandPolicy(["p"]), exec)).rejects.toThrow(/non-JSON/);
+        expect(evaluatePolicy(contextWith(), commandPolicy(["p"]), exec, "/wt")).rejects.toThrow(/non-JSON/);
     });
 
     it("throws on an invalid decision value", async () => {
         const exec: PolicyExec = async () => ({ exitCode: 0, stderr: "", stdout: '{"decision":"maybe"}' });
-        expect(evaluatePolicy(contextWith(), commandPolicy(["p"]), exec)).rejects.toThrow(/invalid decision/);
+        expect(evaluatePolicy(contextWith(), commandPolicy(["p"]), exec, "/wt")).rejects.toThrow(/invalid decision/);
     });
 
     it("throws on a non-zero exit", async () => {
         const exec: PolicyExec = async () => ({ exitCode: 2, stderr: "engine crashed", stdout: "" });
-        expect(evaluatePolicy(contextWith(), commandPolicy(["p"]), exec)).rejects.toThrow(/policy command failed/);
+        expect(evaluatePolicy(contextWith(), commandPolicy(["p"]), exec, "/wt")).rejects.toThrow(
+            /policy command failed/,
+        );
     });
 
     it("throws when command is missing", async () => {
-        expect(evaluatePolicy(contextWith(), commandPolicy(undefined), noopCmdExec)).rejects.toThrow(
+        expect(evaluatePolicy(contextWith(), commandPolicy(undefined), noopCmdExec, "/wt")).rejects.toThrow(
             /policy.command is missing/,
         );
     });
@@ -141,8 +144,114 @@ describe("evaluatePolicy command", () => {
 describe("evaluatePolicy off", () => {
     it("always allows regardless of changes", async () => {
         const policy: ResolvedPolicy = { evaluator: "off", onBlock: "comment" };
-        const res = await evaluatePolicy(contextWith({ changedFiles: ["infra/x"] }), policy, noopCmdExec);
+        const res = await evaluatePolicy(contextWith({ changedFiles: ["infra/x"] }), policy, noopCmdExec, "/wt");
         expect(res.decision).toBe("allow");
         expect(res.reason).toBe("policy disabled");
+    });
+});
+
+describe("parseAgentowners", () => {
+    it("parses globs with decisions and an optional agent column", () => {
+        const rules = parseAgentowners("infra/** block\nsrc/** require_approval gpt\ndocs/** allow");
+        expect(rules).toEqual([
+            { decision: "block", paths: ["infra/**"] },
+            { agent: "gpt", decision: "require_approval", paths: ["src/**"] },
+            { decision: "allow", paths: ["docs/**"] },
+        ]);
+    });
+
+    it("ignores blank lines and # comments, including trailing inline comments", () => {
+        const rules = parseAgentowners("# header\n\ninfra/** block  # needs human\n   \n");
+        expect(rules).toEqual([{ decision: "block", paths: ["infra/**"] }]);
+    });
+
+    it("throws on an invalid decision token", () => {
+        expect(() => parseAgentowners("infra/** maybe")).toThrow(/invalid AGENTOWNERS decision/);
+    });
+
+    it("throws on a malformed line (missing decision)", () => {
+        expect(() => parseAgentowners("infra/**")).toThrow(/malformed AGENTOWNERS line/);
+    });
+
+    it("throws on a malformed line (extra token)", () => {
+        expect(() => parseAgentowners("infra/** block gpt extra")).toThrow(/malformed AGENTOWNERS line/);
+    });
+});
+
+describe("evaluatePolicy agentowners", () => {
+    function agentownersPolicy(agentownersPath?: string): ResolvedPolicy {
+        return { agentownersPath, evaluator: "agentowners", onBlock: "comment" };
+    }
+
+    it("resolves a relative path against cwd and evaluates with most-restrictive-wins", async () => {
+        let seenPath = "";
+        const reader: PolicyReader = async (path) => {
+            seenPath = path;
+            return "src/** allow\nsrc/** block\n";
+        };
+        const res = await evaluatePolicy(
+            contextWith({ changedFiles: ["src/a.ts"] }),
+            agentownersPolicy(".github/AGENTOWNERS"),
+            noopCmdExec,
+            "/wt",
+            reader,
+        );
+        expect(seenPath).toBe("/wt/.github/AGENTOWNERS");
+        expect(res.decision).toBe("block");
+    });
+
+    it("uses an absolute path as-is", async () => {
+        let seenPath = "";
+        const reader: PolicyReader = async (path) => {
+            seenPath = path;
+            return "infra/** block\n";
+        };
+        await evaluatePolicy(
+            contextWith({ changedFiles: ["infra/x"] }),
+            agentownersPolicy("/trusted/AGENTOWNERS"),
+            noopCmdExec,
+            "/wt",
+            reader,
+        );
+        expect(seenPath).toBe("/trusted/AGENTOWNERS");
+    });
+
+    it("only fires an agent-scoped line for the matching agent", async () => {
+        const reader: PolicyReader = async () => "src/** block gpt\n";
+        const claude = await evaluatePolicy(
+            contextWith({ changedFiles: ["src/a.ts"] }),
+            agentownersPolicy(),
+            noopCmdExec,
+            "/wt",
+            reader,
+        );
+        expect(claude.decision).toBe("allow");
+        const gpt = await evaluatePolicy(
+            contextWith({ agent: "gpt", changedFiles: ["src/a.ts"] }),
+            agentownersPolicy(),
+            noopCmdExec,
+            "/wt",
+            reader,
+        );
+        expect(gpt.decision).toBe("block");
+    });
+
+    it("defaults to .github/AGENTOWNERS and allows when the file is missing", async () => {
+        let seenPath = "";
+        const reader: PolicyReader = async (path) => {
+            seenPath = path;
+            return undefined;
+        };
+        const res = await evaluatePolicy(contextWith(), agentownersPolicy(), noopCmdExec, "/wt", reader);
+        expect(seenPath).toBe("/wt/.github/AGENTOWNERS");
+        expect(res.decision).toBe("allow");
+        expect(res.reason).toBe("no AGENTOWNERS file at /wt/.github/AGENTOWNERS");
+    });
+
+    it("throws when a present file is malformed", async () => {
+        const reader: PolicyReader = async () => "infra/** nope\n";
+        expect(evaluatePolicy(contextWith(), agentownersPolicy(), noopCmdExec, "/wt", reader)).rejects.toThrow(
+            /invalid AGENTOWNERS decision/,
+        );
     });
 });

@@ -212,7 +212,7 @@
           "properties": {
             "evaluator": {
               "type": "string",
-              "enum": ["globs", "command", "off"]
+              "enum": ["globs", "command", "agentowners", "off"]
             },
             "command": {
               "type": "array",
@@ -242,6 +242,9 @@
                 "required": ["decision"],
                 "additionalProperties": false
               }
+            },
+            "agentownersPath": {
+              "type": "string"
             },
             "onBlock": {
               "type": "string",
@@ -337,7 +340,7 @@
                 "properties": {
                   "evaluator": {
                     "type": "string",
-                    "enum": ["globs", "command", "off"]
+                    "enum": ["globs", "command", "agentowners", "off"]
                   },
                   "command": {
                     "type": "array",
@@ -367,6 +370,9 @@
                       "required": ["decision"],
                       "additionalProperties": false
                     }
+                  },
+                  "agentownersPath": {
+                    "type": "string"
                   },
                   "onBlock": {
                     "type": "string",

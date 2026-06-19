@@ -20,7 +20,7 @@ export const prSchema = z
     })
     .optional();
 
-export const policyEvaluatorSchema = z.enum(["globs", "command", "off"]);
+export const policyEvaluatorSchema = z.enum(["globs", "command", "agentowners", "off"]);
 export const policyDecisionSchema = z.enum(["block", "require_approval", "allow"]);
 export const policyOnBlockSchema = z.enum(["comment"]);
 
@@ -35,6 +35,7 @@ export const policySchema = z
         evaluator: policyEvaluatorSchema.optional(),
         command: z.array(z.string()).optional(),
         rules: z.array(policyRuleSchema).optional(),
+        agentownersPath: z.string().optional(),
         onBlock: policyOnBlockSchema.optional(),
     })
     .optional();

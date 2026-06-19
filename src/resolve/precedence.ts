@@ -121,6 +121,7 @@ export function resolvePolicy(config: Config, registry: Registry, projectKey: st
         evaluator: block?.evaluator ?? POLICY_EVALUATOR_BUILTIN,
         command: block?.command,
         rules: block?.rules,
+        agentownersPath: block?.agentownersPath,
         onBlock: block?.onBlock ?? POLICY_ON_BLOCK_BUILTIN,
     };
 }

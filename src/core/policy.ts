@@ -1,6 +1,8 @@
-import { Glob, spawn } from "bun";
+import { isAbsolute, resolve } from "node:path";
 
-import type { PolicyDecision, ResolvedPolicy } from "../model/types.ts";
+import { Glob, file, spawn } from "bun";
+
+import type { PolicyDecision, PolicyRule, ResolvedPolicy } from "../model/types.ts";
 import type { Exec } from "./worktree.ts";
 
 /** The change context handed to the policy gate after a run produces a diff. */
@@ -28,6 +30,13 @@ export type PolicyExec = (
     cwd: string,
     stdin: string,
 ) => Promise<{ exitCode: number; stdout: string; stderr: string }>;
+
+/**
+ * Injectable file reader for the agentowners evaluator: returns the file text, or
+ * `undefined` when the file is absent. Tests fake this; production uses
+ * `defaultPolicyReader`.
+ */
+export type PolicyReader = (path: string) => Promise<string | undefined>;
 
 /** Most-restrictive-wins ordering: a lower rank beats a higher one. */
 const DECISION_RANK: Record<PolicyDecision, number> = { block: 0, require_approval: 1, allow: 2 };
@@ -60,8 +69,9 @@ function ruleMatches(rule: { paths?: string[]; agent?: string }, context: Policy
     });
 }
 
-function evaluateGlobs(context: PolicyContext, policy: ResolvedPolicy): PolicyResult {
-    const matched = (policy.rules ?? []).filter((rule) => ruleMatches(rule, context));
+/** Most-restrictive-wins evaluation of a rule set against a change context. */
+function evaluateRules(rules: PolicyRule[], context: PolicyContext): PolicyResult {
+    const matched = rules.filter((rule) => ruleMatches(rule, context));
     if (matched.length === 0) {
         return { decision: "allow", reason: "no policy rule matched" };
     }
@@ -71,6 +81,50 @@ function evaluateGlobs(context: PolicyContext, policy: ResolvedPolicy): PolicyRe
     const scope = winner.agent !== undefined ? ` agent=${winner.agent}` : "";
     const paths = winner.paths !== undefined ? ` paths=${winner.paths.join(",")}` : "";
     return { decision: winner.decision, reason: `rule decision=${winner.decision}${scope}${paths}` };
+}
+
+function evaluateGlobs(context: PolicyContext, policy: ResolvedPolicy): PolicyResult {
+    return evaluateRules(policy.rules ?? [], context);
+}
+
+/**
+ * Parse a CODEOWNERS-style AGENTOWNERS file into policy rules. Each non-blank,
+ * non-comment line is `<path-glob> <decision> [agent]`; `#` starts a comment.
+ * Fails closed: an invalid decision or a malformed line throws rather than being
+ * silently skipped, so a broken policy file never degrades to an allow.
+ */
+export function parseAgentowners(text: string): PolicyRule[] {
+    const rules: PolicyRule[] = [];
+    for (const [index, line] of text.split("\n").entries()) {
+        const stripped = (line.split("#", 1)[0] ?? "").trim();
+        if (stripped.length === 0) {
+            continue;
+        }
+        const [glob, decision, agent, ...rest] = stripped.split(/\s+/);
+        if (glob === undefined || decision === undefined || rest.length > 0) {
+            throw new Error(`beflow: malformed AGENTOWNERS line ${String(index + 1)}: "${line.trim()}"`);
+        }
+        if (!isPolicyDecision(decision)) {
+            throw new Error(`beflow: invalid AGENTOWNERS decision on line ${String(index + 1)}: "${decision}"`);
+        }
+        rules.push({ decision, paths: [glob], ...(agent !== undefined ? { agent } : {}) });
+    }
+    return rules;
+}
+
+async function evaluateAgentowners(
+    context: PolicyContext,
+    policy: ResolvedPolicy,
+    cwd: string,
+    reader: PolicyReader,
+): Promise<PolicyResult> {
+    const configured = policy.agentownersPath ?? ".github/AGENTOWNERS";
+    const path = isAbsolute(configured) ? configured : resolve(cwd, configured);
+    const text = await reader(path);
+    if (text === undefined) {
+        return { decision: "allow", reason: `no AGENTOWNERS file at ${path}` };
+    }
+    return evaluateRules(parseAgentowners(text), context);
 }
 
 function isPolicyDecision(value: unknown): value is PolicyDecision {
@@ -107,19 +161,25 @@ async function evaluateCommand(
 
 /**
  * Apply the resolved policy to a change context. `off` always allows; `globs`
- * runs the rule set with most-restrictive-wins; `command` delegates to an external
- * evaluator and treats any engine failure as a hard error (never a silent allow).
+ * runs the rule set with most-restrictive-wins; `agentowners` runs the same engine
+ * over a CODEOWNERS-style file (missing file allows, malformed file throws);
+ * `command` delegates to an external evaluator and treats any engine failure as a
+ * hard error (never a silent allow).
  */
 export async function evaluatePolicy(
     context: PolicyContext,
     policy: ResolvedPolicy,
     exec: PolicyExec,
+    cwd: string,
+    reader: PolicyReader = defaultPolicyReader,
 ): Promise<PolicyResult> {
     switch (policy.evaluator) {
         case "off":
             return { decision: "allow", reason: "policy disabled" };
         case "globs":
             return evaluateGlobs(context, policy);
+        case "agentowners":
+            return evaluateAgentowners(context, policy, cwd, reader);
         case "command":
             return evaluateCommand(context, policy, exec);
         default: {
@@ -142,4 +202,13 @@ export async function defaultPolicyExec(
         proc.exited,
     ]);
     return { exitCode, stderr, stdout };
+}
+
+/** Default `PolicyReader`: read `path` via `Bun.file`, returning `undefined` when absent. */
+export async function defaultPolicyReader(path: string): Promise<string | undefined> {
+    const handle = file(path);
+    if (!(await handle.exists())) {
+        return undefined;
+    }
+    return handle.text();
 }

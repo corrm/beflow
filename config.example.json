@@ -77,6 +77,22 @@
       },
       "agent": "claude",
       "runMode": "supervised"
+    },
+    "OPS": {
+      "name": "Ops",
+      "plane_project_id": "<project-uuid>",
+      "root": "/path/to/ops",
+      "default_repo": "ops_repo",
+      "repos": {
+        "ops_repo": "/path/to/ops/ops_repo"
+      },
+      "module_repo_map": {
+        "Infra": "ops_repo"
+      },
+      "policy": {
+        "evaluator": "agentowners",
+        "agentownersPath": ".github/AGENTOWNERS"
+      }
     }
   }
 }

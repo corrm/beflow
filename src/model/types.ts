@@ -41,7 +41,7 @@ export interface ResolvedPr {
     baseBranch: string;
 }
 
-export type PolicyEvaluator = "globs" | "command" | "off";
+export type PolicyEvaluator = "globs" | "command" | "agentowners" | "off";
 
 export type PolicyDecision = "block" | "require_approval" | "allow";
 
@@ -57,5 +57,6 @@ export interface ResolvedPolicy {
     evaluator: PolicyEvaluator;
     command?: string[];
     rules?: PolicyRule[];
+    agentownersPath?: string;
     onBlock: PolicyOnBlock;
 }

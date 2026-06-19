@@ -8,3 +8,36 @@ export function configDir(): string {
 export function configPath(): string {
     return join(configDir(), "config.json");
 }
+
+export const CONFIG_BOOTSTRAP: string =
+    JSON.stringify(
+        {
+            $schema: "https://raw.githubusercontent.com/corrm/beflow/main/config.schema.json",
+            agents: {
+                claude: {
+                    args: ["--dangerously-skip-permissions"],
+                    command: "claude",
+                },
+            },
+            defaults: {
+                agent: "claude",
+                runMode: "supervised",
+            },
+            projects: {},
+            tracker: "plane",
+            trackers: {
+                linear: { apiKeyEnv: "LINEAR_API_KEY" },
+                plane: {
+                    apiKeyEnv: "PLANE_API_KEY",
+                    baseUrl: "https://api.plane.so",
+                    workspaceSlug: "your-workspace",
+                },
+            },
+            workspace: {
+                id: "your-workspace-id",
+                slug: "your-workspace",
+            },
+        },
+        null,
+        2,
+    ) + "\n";

@@ -1,9 +1,9 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import type { z } from "zod";
 
-import { configDir } from "./paths.ts";
+import { CONFIG_BOOTSTRAP, configDir, configPath } from "./paths.ts";
 import { configSchema, fileSchema, registrySchema } from "./schema.ts";
 import type { Config, ConfigFile, Registry } from "./schema.ts";
 
@@ -11,7 +11,20 @@ function loadFile<T>(path: string, schema: z.ZodType<T, z.ZodTypeDef, unknown>):
     let raw: string;
     try {
         raw = readFileSync(path, "utf8");
-    } catch {
+    } catch (err) {
+        if (
+            path === configPath() &&
+            typeof err === "object" &&
+            err !== null &&
+            "code" in err &&
+            err.code === "ENOENT"
+        ) {
+            mkdirSync(dirname(path), { recursive: true });
+            writeFileSync(path, CONFIG_BOOTSTRAP, "utf8");
+            throw new Error(
+                `beflow: created ${path} from the built-in template — fill in your workspace details and re-run`,
+            );
+        }
         throw new Error(`beflow: cannot read config file at ${path}`);
     }
 

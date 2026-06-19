@@ -108,7 +108,7 @@ describe("addProject", () => {
 
         expect(() => {
             addProject("/fake/dir", "CG", newProject, deps);
-        }).toThrow(`beflow: project "CG" already exists in config.json`);
+        }).toThrow(`beflow: project "CG" already exists in /fake/dir/config.json`);
     });
 
     it("throws from fileSchema.parse when the config is invalid after merge", () => {

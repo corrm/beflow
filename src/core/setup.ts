@@ -1,5 +1,6 @@
 import { cancel, confirm, isCancel, select, text } from "@clack/prompts";
 
+import { configDir, configPath } from "../config/paths.ts";
 import { addProject } from "../config/persist.ts";
 import type { Project, Registry } from "../config/schema.ts";
 import type {
@@ -161,7 +162,7 @@ export async function setupProject(projectKey: string, deps: SetupDeps): Promise
         const ask = deps.askProjectSpec ?? (process.stdin.isTTY ? defaultAskProjectSpec : undefined);
         if (ask === undefined) {
             throw new Error(
-                `beflow: project "${projectKey}" is not in config.json; run setup in an interactive terminal to create it`,
+                `beflow: project "${projectKey}" is not in ${configPath()}; run setup in an interactive terminal to create it`,
             );
         }
         const { entry, spec } = await ask({ key: projectKey, tracker: deps.trackerName });
@@ -169,7 +170,7 @@ export async function setupProject(projectKey: string, deps: SetupDeps): Promise
         if (deps.trackerName === "plane" && trackerProjectId !== undefined) {
             entry.plane_project_id = trackerProjectId;
         }
-        (deps.persist ?? addProject)(deps.dir ?? process.cwd(), projectKey, entry);
+        (deps.persist ?? addProject)(deps.dir ?? configDir(), projectKey, entry);
         // The tracker holds a reference to this same registry object; mutate it in
         // place so ensureBoard below sees the freshly created project.
         deps.registry.projects[projectKey] = entry;

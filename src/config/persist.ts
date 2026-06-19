@@ -46,7 +46,7 @@ export function addProject(dir: string, key: string, project: Project, deps?: Pe
     const { projects: existingProjects } = projectsExtractSchema.parse(parsed);
 
     if (existingProjects?.[key] !== undefined) {
-        throw new Error(`beflow: project "${key}" already exists in config.json`);
+        throw new Error(`beflow: project "${key}" already exists in ${path}`);
     }
 
     const projects: Record<string, unknown> = { ...existingProjects, [key]: project };

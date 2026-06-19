@@ -274,7 +274,7 @@ describe("setupProject", () => {
                 tracker,
                 trackerName: "plane",
             }),
-        ).rejects.toThrow(/project "ZZ" is not in config\.json; run setup in an interactive terminal/);
+        ).rejects.toThrow(/project "ZZ" is not in .*config\.json; run setup in an interactive terminal/);
 
         expect(tracker.createProjectCalls).toHaveLength(0);
         expect(persistCalls).toHaveLength(0);

@@ -1,20 +1,12 @@
 # Config reference
 
-beflow reads its configuration from `~/beflow/config.json`. Create the directory
-and copy the example to get started:
-
-```bash
-mkdir -p ~/beflow
-cp config.example.json ~/beflow/config.json
-```
+beflow reads its configuration from `~/beflow/config.json`. Running `beflow doctor` creates the file automatically on first run — open it, fill in your workspace details, and re-run.
 
 The file holds the tracker connection, the workspace + project registry, the
 agent definitions, and global defaults. The shipped `config.example.json`
 includes a `$schema` pointing at the published JSON schema for editor
 validation. API keys never live in this file — they are read from environment
 variables (see [Secrets](#secrets)).
-
-Run `beflow doctor` to validate the file and your environment.
 
 ---
 
@@ -74,12 +66,12 @@ Global defaults; every project may override any of these under
 
 ## Projects
 
-Each entry maps a project key (e.g. `APP`) to a tracker project (a Plane project
+Each entry maps a project key (e.g. `MYAPP`) to a tracker project (a Plane project
 or a Linear team) and the local repos its work lands in.
 
 ```json
 "projects": {
-  "APP": {
+  "MYAPP": {
     "name": "My App",
     "plane_project_id": "00000000-0000-0000-0000-000000000000",
     "root": "/path/to/your/project",
@@ -134,7 +126,7 @@ runs the agent in a git worktree of that repo:
 See [resolution](resolution.md#repo) for the full cascade.
 
 ```json
-"APP": {
+"MYAPP": {
   "name": "My App",
   "root": "/home/you/projects/app",
   "default_repo": "api",
@@ -154,7 +146,7 @@ See [resolution](resolution.md#repo) for the full cascade.
 With the above, a work item filed under the **Backend** module runs in `api`, a
 **Frontend** item in `web`, and a **Shared Library** item in `shared`. An item
 with no module (or one not in the map) falls back to `default_repo` (`api`).
-Override per run with `beflow run APP-42 --repo web`.
+Override per run with `beflow run <KEY>-42 --repo web`.
 
 ## Agents
 
@@ -186,8 +178,13 @@ API keys are read from the environment, never from `config.json`. Set them in
 your shell profile (`~/.zshrc` or `~/.bashrc`) and reload:
 
 ```bash
-export PLANE_API_KEY=...   # Plane
-export LINEAR_API_KEY=...  # Linear
+# zsh:
+echo 'export PLANE_API_KEY=...' >> ~/.zshrc  && source ~/.zshrc
+# bash:
+echo 'export PLANE_API_KEY=...' >> ~/.bashrc && source ~/.bashrc
+# Windows PowerShell:
+[System.Environment]::SetEnvironmentVariable("PLANE_API_KEY","your_token","User")
+# Use LINEAR_API_KEY instead if you are on Linear.
 ```
 
 The variable names are whatever each tracker's `apiKeyEnv` points at.

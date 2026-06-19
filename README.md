@@ -52,24 +52,23 @@ bun run build          # optional: compile a standalone ./dist/beflow binary
 ## Quickstart
 
 ```bash
-# 1. Create your config from the template and edit it
-mkdir -p ~/beflow
-cp config.example.json ~/beflow/config.json
+# 1. Set your tracker API token in your shell profile:
+#    zsh:   echo 'export PLANE_API_KEY=...' >> ~/.zshrc  && source ~/.zshrc
+#    bash:  echo 'export PLANE_API_KEY=...' >> ~/.bashrc && source ~/.bashrc
+#    PowerShell (Windows):
+#           [System.Environment]::SetEnvironmentVariable("PLANE_API_KEY","your_token","User")
+# Use LINEAR_API_KEY instead if you are on Linear.
 
-# 2. Set your tracker API token in your shell profile
-echo 'export PLANE_API_KEY=your_token_here' >> ~/.zshrc   # Plane
-# or: echo 'export LINEAR_API_KEY=your_token_here' >> ~/.zshrc   # Linear
-source ~/.zshrc
-
-# 3. Check your environment
+# 2. Check your setup — creates ~/beflow/config.json on first run
 beflow doctor
+# Open ~/beflow/config.json, fill in your workspace slug, project IDs, and repo paths, then re-run.
 
-# 4. Provision the project's board (states, labels, types, modules)
-beflow setup APP
+# 3. Provision the board (creates the tracker project if it doesn't exist)
+beflow setup <KEY>     # <KEY> is the project key in your config (e.g. APP, BE, WEB)
 
-# 5. Run a work item, or let the daemon drive the queue
-beflow run APP-42 --auto
-beflow watch APP
+# 4. Run a work item, or start the watch daemon
+beflow run <KEY>-42 --auto
+beflow watch <KEY>
 ```
 
 See the [config reference](docs/config.md) for every setting and
@@ -77,11 +76,11 @@ See the [config reference](docs/config.md) for every setting and
 
 ## Run modes
 
-| Mode       | Flag                         | What it is                                                                                             |
-| ---------- | ---------------------------- | ------------------------------------------------------------------------------------------------------ |
-| Autonomous | `beflow run APP-42 --auto`   | Headless. Isolated git worktree; for an implement job, opens a PR and moves the item to **In Review**. |
-| Supervised | `beflow run APP-42 --attend` | Interactive via acpx — you approve actions as they happen.                                             |
-| Open       | `beflow run APP-42 --open`   | Runs in the agent's own native TUI; you're present for a multi-turn session.                           |
+| Mode       | Flag                           | What it is                                                                                             |
+| ---------- | ------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| Autonomous | `beflow run <KEY>-42 --auto`   | Headless. Isolated git worktree; for an implement job, opens a PR and moves the item to **In Review**. |
+| Supervised | `beflow run <KEY>-42 --attend` | Interactive via acpx — you approve actions as they happen.                                             |
+| Open       | `beflow run <KEY>-42 --open`   | Runs in the agent's own native TUI; you're present for a multi-turn session.                           |
 
 Runs are **resumable**: each persists a run record and keeps its worktree until
 the item is Done, so an interrupted run picks up where it left off.
@@ -122,12 +121,9 @@ Full details — flags, examples, behavior — in the
 
 beflow reads its configuration from `~/beflow/config.json` — the tracker
 connection, your workspace + project registry, agent definitions, and global
-defaults. Start from [`config.example.json`](config.example.json):
-
-```bash
-mkdir -p ~/beflow
-cp config.example.json ~/beflow/config.json
-```
+defaults. Running `beflow doctor` creates the file automatically on first run —
+open it, fill in your workspace details, and re-run. See
+[`config.example.json`](config.example.json) for a complete reference.
 
 A project maps a key to a tracker project and the local repos its work lands in:
 

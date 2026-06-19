@@ -8,7 +8,8 @@ import { fileSchema } from "../src/config/schema.ts";
 
 const baseFile = {
     agents: {},
-    defaults: { agent: "claude", runMode: "supervised" as const },
+    agent: "claude",
+    runMode: "supervised" as const,
     projects: {},
     tracker: "plane" as const,
     trackers: {},
@@ -18,21 +19,21 @@ const baseFile = {
 describe("defaults.onManualMove", () => {
     it("defaults to yield when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
-        expect(parsed.defaults.onManualMove).toBe("yield");
+        expect(parsed.onManualMove).toBe("yield");
     });
 
     it("accepts an explicit abort", () => {
         const parsed = fileSchema.parse({
             ...baseFile,
-            defaults: { ...baseFile.defaults, onManualMove: "abort" },
+            onManualMove: "abort",
         });
-        expect(parsed.defaults.onManualMove).toBe("abort");
+        expect(parsed.onManualMove).toBe("abort");
     });
 
     it("rejects an invalid value", () => {
         const result = fileSchema.safeParse({
             ...baseFile,
-            defaults: { ...baseFile.defaults, onManualMove: "fight" },
+            onManualMove: "fight",
         });
         expect(result.success).toBe(false);
     });
@@ -97,14 +98,14 @@ describe("deadLetter.maxAttempts", () => {
     it("parses a global default deadLetter.maxAttempts", () => {
         const parsed = fileSchema.parse({
             ...baseFile,
-            defaults: { ...baseFile.defaults, deadLetter: { maxAttempts: 5 } },
+            deadLetter: { maxAttempts: 5 },
         });
-        expect(parsed.defaults.deadLetter?.maxAttempts).toBe(5);
+        expect(parsed.deadLetter?.maxAttempts).toBe(5);
     });
 
     it("leaves defaults.deadLetter undefined when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
-        expect(parsed.defaults.deadLetter).toBeUndefined();
+        expect(parsed.deadLetter).toBeUndefined();
     });
 
     it("parses a per-project deadLetter.maxAttempts", () => {
@@ -130,14 +131,14 @@ describe("qualityGate.commands", () => {
     it("parses a global default qualityGate.commands", () => {
         const parsed = fileSchema.parse({
             ...baseFile,
-            defaults: { ...baseFile.defaults, qualityGate: { commands: ["bun test"] } },
+            qualityGate: { commands: ["bun test"] },
         });
-        expect(parsed.defaults.qualityGate?.commands).toEqual(["bun test"]);
+        expect(parsed.qualityGate?.commands).toEqual(["bun test"]);
     });
 
     it("leaves defaults.qualityGate undefined when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
-        expect(parsed.defaults.qualityGate).toBeUndefined();
+        expect(parsed.qualityGate).toBeUndefined();
     });
 
     it("parses a per-project qualityGate with multiple commands", () => {
@@ -163,16 +164,16 @@ describe("routing schema", () => {
     it("parses global defaults.routing", () => {
         const parsed = fileSchema.parse({
             ...baseFile,
-            defaults: { ...baseFile.defaults, routing: { implement: "big", spec: "fast" } },
+            routing: { implement: "big", spec: "fast" },
         });
-        expect(parsed.defaults.routing?.implement).toBe("big");
-        expect(parsed.defaults.routing?.spec).toBe("fast");
-        expect(parsed.defaults.routing?.triage).toBeUndefined();
+        expect(parsed.routing?.implement).toBe("big");
+        expect(parsed.routing?.spec).toBe("fast");
+        expect(parsed.routing?.triage).toBeUndefined();
     });
 
     it("leaves defaults.routing undefined when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
-        expect(parsed.defaults.routing).toBeUndefined();
+        expect(parsed.routing).toBeUndefined();
     });
 
     it("parses per-project routing", () => {
@@ -215,15 +216,15 @@ describe("review schema", () => {
     it("parses global defaults.review", () => {
         const parsed = fileSchema.parse({
             ...baseFile,
-            defaults: { ...baseFile.defaults, review: { enabled: true, postToPr: true } },
+            review: { enabled: true, postToPr: true },
         });
-        expect(parsed.defaults.review?.enabled).toBe(true);
-        expect(parsed.defaults.review?.postToPr).toBe(true);
+        expect(parsed.review?.enabled).toBe(true);
+        expect(parsed.review?.postToPr).toBe(true);
     });
 
     it("leaves defaults.review undefined when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
-        expect(parsed.defaults.review).toBeUndefined();
+        expect(parsed.review).toBeUndefined();
     });
 
     it("parses per-project review", () => {
@@ -266,15 +267,15 @@ describe("review schema", () => {
 describe("defaults.telemetry", () => {
     it("leaves defaults.telemetry undefined when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
-        expect(parsed.defaults.telemetry).toBeUndefined();
+        expect(parsed.telemetry).toBeUndefined();
     });
 
     it("parses defaults.telemetry.inComment", () => {
         const parsed = fileSchema.parse({
             ...baseFile,
-            defaults: { ...baseFile.defaults, telemetry: { inComment: true } },
+            telemetry: { inComment: true },
         });
-        expect(parsed.defaults.telemetry?.inComment).toBe(true);
+        expect(parsed.telemetry?.inComment).toBe(true);
     });
 
     it("parses per-project telemetry", () => {

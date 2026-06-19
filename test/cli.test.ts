@@ -25,7 +25,9 @@ import type {
 
 const config: Config = {
     agents: { claude: { command: "claude" }, opencode: { command: "opencode" } },
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "supervised" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "supervised",
     runs: { dir: join(tmpdir(), "beflow-cli-test-runs") },
     tracker: "plane",
     trackers: {},

@@ -6,7 +6,8 @@ import type { ResolveInputs } from "../src/resolve/precedence.ts";
 
 const project: Project = {
     default_repo: "api",
-    defaults: { agent: "projAgent", runMode: "autonomous" },
+    agent: "projAgent",
+    runMode: "autonomous",
     module_repo_map: {
         GUI: "api",
         Codegen: "api_codegen",
@@ -56,12 +57,12 @@ describe("resolveAgent cascade order", () => {
     });
 
     it("falls to global when project has no default", () => {
-        const p: Project = { ...project, defaults: undefined };
+        const p: Project = { ...project, agent: undefined, runMode: undefined };
         expect(resolveAgent(base({ project: p }), "implement")).toBe("globalAgent");
     });
 
     it("falls to built-in (claude) when nothing else set", () => {
-        const p: Project = { ...project, defaults: undefined };
+        const p: Project = { ...project, agent: undefined, runMode: undefined };
         const inputs = base({ project: p });
         // No global agent configured: the cascade must fall through to the built-in.
         const noGlobal: ResolveInputs = {
@@ -79,7 +80,7 @@ describe("routing by jobkind", () => {
     });
 
     it("project.routing overrides global.routing for the same jobkind", () => {
-        const p: Project = { ...project, defaults: undefined, routing: { spec: "projSpec" } };
+        const p: Project = { ...project, agent: undefined, runMode: undefined, routing: { spec: "projSpec" } };
         const inputs: ResolveInputs = {
             ...base({ project: p }),
             global: { agent: undefined, routing: { spec: "globalSpec" }, runMode: "supervised" },
@@ -88,7 +89,7 @@ describe("routing by jobkind", () => {
     });
 
     it("global.routing is used when project.routing is absent", () => {
-        const p: Project = { ...project, defaults: undefined, routing: undefined };
+        const p: Project = { ...project, agent: undefined, runMode: undefined, routing: undefined };
         const inputs: ResolveInputs = {
             ...base({ project: p }),
             global: { agent: undefined, routing: { triage: "triageAgent" }, runMode: "supervised" },
@@ -109,10 +110,10 @@ describe("routing by jobkind", () => {
     });
 
     it("routing absent falls back to project.defaults.agent then global.agent then built-in", () => {
-        const p: Project = { ...project, defaults: { agent: "projAgent" }, routing: undefined };
+        const p: Project = { ...project, agent: "projAgent", routing: undefined };
         expect(resolveAgent(base({ project: p }), "triage")).toBe("projAgent");
 
-        const noProjectDefaults: Project = { ...project, defaults: undefined, routing: undefined };
+        const noProjectDefaults: Project = { ...project, agent: undefined, runMode: undefined, routing: undefined };
         expect(resolveAgent(base({ project: noProjectDefaults }), "triage")).toBe("globalAgent");
 
         const noGlobal: ResolveInputs = {
@@ -123,7 +124,7 @@ describe("routing by jobkind", () => {
     });
 
     it("routing.implement does not affect spec or triage resolution", () => {
-        const p: Project = { ...project, defaults: undefined, routing: { implement: "bigAgent" } };
+        const p: Project = { ...project, agent: undefined, runMode: undefined, routing: { implement: "bigAgent" } };
         const inputs: ResolveInputs = {
             ...base({ project: p }),
             global: { agent: "globalAgent", runMode: "supervised" },
@@ -143,7 +144,7 @@ describe("resolveRunMode cascade order", () => {
     });
 
     it("built-in fallback is supervised", () => {
-        const p: Project = { ...project, defaults: undefined };
+        const p: Project = { ...project, agent: undefined, runMode: undefined };
         const inputs = base({ project: p });
         // No global runMode configured: the cascade must fall through to the built-in.
         const noGlobal: ResolveInputs = {
@@ -225,7 +226,7 @@ describe("resolve (top-level)", () => {
     });
 
     it("uses built-ins and auto-detect when nothing overrides", () => {
-        const p: Project = { ...project, defaults: undefined };
+        const p: Project = { ...project, agent: undefined, runMode: undefined };
         const out = resolve(
             base({
                 global: { agent: "globalAgent", runMode: "supervised" },

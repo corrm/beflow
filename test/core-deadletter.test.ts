@@ -5,7 +5,9 @@ import { QUARANTINED_LABEL, resolveDeadLetterThreshold, shouldQuarantine } from 
 
 const config: Config = {
     agents: { claude: { command: "claude" } },
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "autonomous" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "autonomous",
     runs: { dir: "/runs" },
     tracker: "plane",
     trackers: {},
@@ -45,12 +47,12 @@ describe("deadletter", () => {
     });
 
     it("resolveDeadLetterThreshold honours the global default", () => {
-        const withGlobal: Config = { ...config, defaults: { ...config.defaults, deadLetter: { maxAttempts: 5 } } };
+        const withGlobal: Config = { ...config, deadLetter: { maxAttempts: 5 } };
         expect(resolveDeadLetterThreshold(withGlobal, registry, "CG")).toBe(5);
     });
 
     it("resolveDeadLetterThreshold lets a project override the global default", () => {
-        const withGlobal: Config = { ...config, defaults: { ...config.defaults, deadLetter: { maxAttempts: 5 } } };
+        const withGlobal: Config = { ...config, deadLetter: { maxAttempts: 5 } };
         const withProject: Registry = {
             ...registry,
             projects: { CG: { ...registry.projects.CG!, deadLetter: { maxAttempts: 7 } } },

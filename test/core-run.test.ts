@@ -47,7 +47,9 @@ import type {
 
 const config: Config = {
     agents: { claude: { command: "claude" } },
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "supervised" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "supervised",
     runs: { dir: "/runs" },
     tracker: "plane",
     trackers: {},
@@ -402,7 +404,7 @@ describe("runIssue", () => {
     it("assigns the configured user after moving to In Progress", async () => {
         const tracker = new FakeTracker(makeIssue());
         const { driver } = fakeDriver({ status: "done", summary: "s" });
-        const cfg: Config = { ...config, defaults: { ...config.defaults, assignee: "u-1" } };
+        const cfg: Config = { ...config, assignee: "u-1" };
         await runIssue("CG-42", {}, deps({ config: cfg, driver, tracker }));
 
         const moveIdx = tracker.calls.findIndex((c) => c.kind === "updateState" && c.state === "In Progress");
@@ -545,7 +547,7 @@ describe("runIssue", () => {
         return {
             ...config,
             agents: { claude: { command: "claude", model: "sonnet" } },
-            defaults: { ...config.defaults, telemetry: { inComment } },
+            telemetry: { inComment },
         };
     }
 
@@ -1220,7 +1222,7 @@ describe("runIssue", () => {
         };
         const { git } = fakeGit();
         const { fs, store } = memRunsFs();
-        const abortCfg: Config = { ...config, defaults: { ...config.defaults, onManualMove: "abort" } };
+        const abortCfg: Config = { ...config, onManualMove: "abort" };
         const result = await runIssue(
             "CG-42",
             {},
@@ -1336,7 +1338,7 @@ describe("runIssue", () => {
 
     // The input-quality gate fires only on a FRESH autonomous dispatch. The config here
     // Defaults to autonomous so resolveRun picks runMode "autonomous" for the issue.
-    const autonomousConfig: Config = { ...config, defaults: { ...config.defaults, runMode: "autonomous" } };
+    const autonomousConfig: Config = { ...config, runMode: "autonomous" };
 
     function thinRegistry(min: number): Registry {
         return {
@@ -1551,7 +1553,7 @@ describe("runIssue", () => {
             parent: { body: "epic goal", key: "CG-1", title: "Epic", type: "Epic" },
         });
         const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
-        const cfg: Config = { ...config, defaults: { ...config.defaults, linkedContext: false } };
+        const cfg: Config = { ...config, linkedContext: false };
         await runIssue("CG-42", {}, deps({ config: cfg, driver, tracker }));
 
         expect(tracker.contextCalls).toBe(0);
@@ -2154,7 +2156,7 @@ describe("runSupervised", () => {
 
     it("assigns the configured user after moving to In Progress", async () => {
         const tracker = new FakeTracker(makeIssue());
-        const cfg: Config = { ...config, defaults: { ...config.defaults, assignee: "u-1" } };
+        const cfg: Config = { ...config, assignee: "u-1" };
         await runSupervised(
             "CG-42",
             {},
@@ -2386,7 +2388,7 @@ describe("runOpen", () => {
 
     it("assigns the configured user after moving to In Progress", async () => {
         const tracker = new FakeTracker(makeIssue());
-        const cfg: Config = { ...config, defaults: { ...config.defaults, assignee: "u-1" } };
+        const cfg: Config = { ...config, assignee: "u-1" };
         await runOpen(
             "CG-42",
             {},

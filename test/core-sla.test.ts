@@ -6,7 +6,9 @@ import { ageMinutes, formatAge, resolveSla, shouldRemind } from "../src/core/sla
 
 const baseConfig: Config = {
     agents: { claude: { command: "claude" } },
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "autonomous" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "autonomous",
     runs: { dir: "/runs" },
     tracker: "plane",
     trackers: {},
@@ -48,7 +50,7 @@ describe("resolveSla", () => {
     it("uses the global defaults when no project override exists", () => {
         const config: Config = {
             ...baseConfig,
-            defaults: { ...baseConfig.defaults, sla: { inReviewMinutes: 120, needsInputMinutes: 60 } },
+            sla: { inReviewMinutes: 120, needsInputMinutes: 60 },
         };
         expect(resolveSla(config, baseRegistry, "CG")).toEqual({ inReviewMinutes: 120, needsInputMinutes: 60 });
     });
@@ -56,7 +58,7 @@ describe("resolveSla", () => {
     it("prefers the per-project override over the global default", () => {
         const config: Config = {
             ...baseConfig,
-            defaults: { ...baseConfig.defaults, sla: { inReviewMinutes: 120, needsInputMinutes: 60 } },
+            sla: { inReviewMinutes: 120, needsInputMinutes: 60 },
         };
         const registry: Registry = {
             ...baseRegistry,

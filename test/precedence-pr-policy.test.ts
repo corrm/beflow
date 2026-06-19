@@ -5,7 +5,9 @@ import { resolvePolicy, resolvePr } from "../src/resolve/precedence.ts";
 
 const config: Config = {
     agents: {},
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "autonomous" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "autonomous",
     tracker: "plane",
     trackers: {},
 };
@@ -35,7 +37,7 @@ describe("resolvePr", () => {
     it("falls back to the global default pr block", () => {
         const cfg: Config = {
             ...config,
-            defaults: { ...config.defaults, pr: { owner: "beflow", baseBranch: "main" } },
+            pr: { owner: "beflow", baseBranch: "main" },
         };
         expect(resolvePr(cfg, registryWith(), "CG")).toEqual({ owner: "beflow", baseBranch: "main" });
     });
@@ -43,7 +45,7 @@ describe("resolvePr", () => {
     it("project pr replaces the global default", () => {
         const cfg: Config = {
             ...config,
-            defaults: { ...config.defaults, pr: { owner: "agent", baseBranch: "develop" } },
+            pr: { owner: "agent", baseBranch: "develop" },
         };
         const reg = registryWith({ pr: { owner: "beflow", baseBranch: "main" } });
         expect(resolvePr(cfg, reg, "CG")).toEqual({ owner: "beflow", baseBranch: "main" });
@@ -53,7 +55,7 @@ describe("resolvePr", () => {
         const reg = registryWith({ pr: { owner: "beflow" } });
         expect(resolvePr(config, reg, "CG")).toEqual({ owner: "beflow", baseBranch: "auto" });
 
-        const cfg: Config = { ...config, defaults: { ...config.defaults, pr: { baseBranch: "main" } } };
+        const cfg: Config = { ...config, pr: { baseBranch: "main" } };
         expect(resolvePr(cfg, registryWith(), "CG")).toEqual({ owner: "agent", baseBranch: "main" });
     });
 

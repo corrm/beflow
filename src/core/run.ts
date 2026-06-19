@@ -86,7 +86,7 @@ export async function resolveRun(
 
     const resolved = resolve({
         cli,
-        global: config.defaults,
+        global: config,
         issue: {
             areas: issue.areas,
             state: { group: issue.state.group },
@@ -446,8 +446,8 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
     saveRecord(runsDir, record, deps.runsFs);
 
     await moveToInProgress(deps.tracker, issue);
-    if (deps.config.defaults.assignee !== undefined) {
-        await deps.tracker.assign(issue, deps.config.defaults.assignee);
+    if (deps.config.assignee !== undefined) {
+        await deps.tracker.assign(issue, deps.config.assignee);
     }
 
     const acpCommand = resolveAcpCommand(effectiveAgent, deps.config.agents[effectiveAgent]);
@@ -462,7 +462,7 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
 
     const baseTask =
         renderTask(deps.prompts, issue, resolved.repo) +
-        (await gatherLinkedContext(deps.tracker, issue, deps.config.defaults.linkedContext !== false, log));
+        (await gatherLinkedContext(deps.tracker, issue, deps.config.linkedContext !== false, log));
     const task =
         deps.continuation !== undefined
             ? `${deps.continuation}\n\n${baseTask}`
@@ -473,7 +473,7 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
     const sleep = deps.sleep ?? realSleep;
     const pollMs = deps.manualMovePollMs ?? DEFAULT_MANUAL_MOVE_POLL_MS;
     const poller =
-        deps.config.defaults.onManualMove === "abort"
+        deps.config.onManualMove === "abort"
             ? startManualMovePoller({
                   acpCommand,
                   cwd,
@@ -985,8 +985,8 @@ export async function runSupervised(
     const clock = deps.clock ?? systemClock;
 
     await moveToInProgress(deps.tracker, issue);
-    if (deps.config.defaults.assignee !== undefined) {
-        await deps.tracker.assign(issue, deps.config.defaults.assignee);
+    if (deps.config.assignee !== undefined) {
+        await deps.tracker.assign(issue, deps.config.assignee);
     }
 
     const record: RunRecord = {
@@ -1012,7 +1012,7 @@ export async function runSupervised(
     const contract = renderContract(deps.prompts, resolved.jobKind, issue, resolved.repo);
     const task =
         renderTask(deps.prompts, issue, resolved.repo) +
-        (await gatherLinkedContext(deps.tracker, issue, deps.config.defaults.linkedContext !== false, log));
+        (await gatherLinkedContext(deps.tracker, issue, deps.config.linkedContext !== false, log));
 
     // Inject the managed `.acpxrc.json` into the repo checkout for the interactive
     // Acpx launch, then restore it in a finally so the user's repo is left exactly
@@ -1140,9 +1140,9 @@ export async function runOpen(key: string, cli: Partial<Resolved>, deps: RunOpen
 
     log(`beflow: moving ${key} to In Progress`);
     await moveToInProgress(deps.tracker, issue);
-    if (deps.config.defaults.assignee !== undefined) {
-        log(`beflow: assigning ${key} to ${deps.config.defaults.assignee}`);
-        await deps.tracker.assign(issue, deps.config.defaults.assignee);
+    if (deps.config.assignee !== undefined) {
+        log(`beflow: assigning ${key} to ${deps.config.assignee}`);
+        await deps.tracker.assign(issue, deps.config.assignee);
     }
 
     const record: RunRecord = {
@@ -1162,7 +1162,7 @@ export async function runOpen(key: string, cli: Partial<Resolved>, deps: RunOpen
     log(`beflow: launching ${agentCfg.command} in ${cwd}`);
     const task =
         renderTask(deps.prompts, issue, resolved.repo) +
-        (await gatherLinkedContext(deps.tracker, issue, deps.config.defaults.linkedContext !== false, log)) +
+        (await gatherLinkedContext(deps.tracker, issue, deps.config.linkedContext !== false, log)) +
         OPEN_SESSION_TRAILER;
     await openIssue({
         args: agentCfg.args ?? [],

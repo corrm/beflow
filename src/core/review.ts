@@ -71,11 +71,11 @@ export type ReviewSha = (prUrl: string) => Promise<string | undefined>;
 
 // Project-over-default resolution of the per-project review toggles.
 export function resolveReviewEnabled(config: Config, registry: Registry, projectKey: string): boolean {
-    return registry.projects[projectKey]?.review?.enabled ?? config.defaults.review?.enabled ?? false;
+    return registry.projects[projectKey]?.review?.enabled ?? config.review?.enabled ?? false;
 }
 
 export function resolveReviewPostToPr(config: Config, registry: Registry, projectKey: string): boolean {
-    return registry.projects[projectKey]?.review?.postToPr ?? config.defaults.review?.postToPr ?? false;
+    return registry.projects[projectKey]?.review?.postToPr ?? config.review?.postToPr ?? false;
 }
 
 function projectKeyOf(issueKey: string): string {

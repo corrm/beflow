@@ -23,7 +23,9 @@ import type {
 
 const config: Config = {
     agents: { claude: { command: "claude" } },
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "autonomous" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "autonomous",
     runs: { dir: join(tmpdir(), "beflow-dry-run-test-runs") },
     tracker: "plane",
     trackers: {},

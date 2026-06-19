@@ -5,16 +5,16 @@ import { isThinIssue, resolveMinBodyChars, visibleBodyLength } from "../src/core
 
 const config: Config = {
     agents: {},
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "autonomous" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "autonomous",
     tracker: "plane",
     trackers: {},
 };
 
 function registryWith(over?: { global?: number; project?: number }): { config: Config; registry: Registry } {
     const cfg: Config =
-        over?.global === undefined
-            ? config
-            : { ...config, defaults: { ...config.defaults, inputQuality: { minBodyChars: over.global } } };
+        over?.global === undefined ? config : { ...config, inputQuality: { minBodyChars: over.global } };
     const registry: Registry = {
         projects: {
             CG: {

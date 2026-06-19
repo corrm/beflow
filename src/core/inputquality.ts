@@ -26,5 +26,5 @@ export function isThinIssue(body: string, minBodyChars: number): boolean {
 }
 
 export function resolveMinBodyChars(config: Config, registry: Registry, projectKey: string): number {
-    return registry.projects[projectKey]?.inputQuality?.minBodyChars ?? config.defaults.inputQuality?.minBodyChars ?? 0;
+    return registry.projects[projectKey]?.inputQuality?.minBodyChars ?? config.inputQuality?.minBodyChars ?? 0;
 }

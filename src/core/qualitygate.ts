@@ -21,7 +21,7 @@ const MAX_OUTPUT_CHARS = 16000;
  */
 export function resolveQualityGate(config: Config, registry: Registry, projectKey: string): string[] {
     const projectCommands = registry.projects[projectKey]?.qualityGate?.commands;
-    const globalCommands = config.defaults.qualityGate?.commands;
+    const globalCommands = config.qualityGate?.commands;
     return projectCommands ?? globalCommands ?? [];
 }
 

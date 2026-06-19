@@ -27,7 +27,8 @@ const validFile = {
     agents: {
         claude: { args: ["--dangerously-skip-permissions"], command: "claude-acp" },
     },
-    defaults: { agent: "claude", runMode: "supervised" },
+    agent: "claude",
+    runMode: "supervised",
     projects: {
         CG: {
             default_repo: "bin",
@@ -56,7 +57,7 @@ describe("loadConfig", () => {
         writeFileSync(join(dir, "config.json"), JSON.stringify(validFile));
         const config = loadConfig(dir);
         expect(config.tracker).toBe("plane");
-        expect(config.defaults.agent).toBe("claude");
+        expect(config.agent).toBe("claude");
         expect(config.agents.claude?.args).toEqual(["--dangerously-skip-permissions"]);
         // The registry slice is not part of Config.
         expect("workspace" in config).toBe(false);
@@ -72,7 +73,7 @@ describe("loadConfig", () => {
 
     it("throws a useful message on invalid config (bad runMode)", () => {
         const dir = tmp();
-        const bad = { ...validFile, defaults: { agent: "claude", runMode: "attended" } };
+        const bad = { ...validFile, runMode: "attended" };
         writeFileSync(join(dir, "config.json"), JSON.stringify(bad));
         expect(() => loadConfig(dir)).toThrow(/config\.json failed validation/);
     });

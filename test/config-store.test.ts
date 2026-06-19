@@ -7,7 +7,9 @@ import type { ConfigWatcher } from "../src/config/store.ts";
 function makeConfig(agent: string): Config {
     return {
         agents: { claude: { command: "claude" } },
-        defaults: { agent, onManualMove: "yield", runMode: "autonomous" },
+        agent,
+        onManualMove: "yield",
+        runMode: "autonomous",
         tracker: "plane",
         trackers: {},
     };
@@ -53,10 +55,10 @@ describe("ConfigStore", () => {
             },
         });
         store.init();
-        expect(store.get().config.defaults.agent).toBe("claude");
+        expect(store.get().config.agent).toBe("claude");
 
         store.reload();
-        expect(store.get().config.defaults.agent).toBe("omp");
+        expect(store.get().config.agent).toBe("omp");
         expect(logs).toContain("beflow: config reloaded");
     });
 
@@ -77,12 +79,12 @@ describe("ConfigStore", () => {
             },
         });
         store.init();
-        expect(store.get().config.defaults.agent).toBe("claude");
+        expect(store.get().config.agent).toBe("claude");
 
         expect(() => {
             store.reload();
         }).not.toThrow();
-        expect(store.get().config.defaults.agent).toBe("claude");
+        expect(store.get().config.agent).toBe("claude");
         expect(logs.some((m) => m.includes("config reload failed") && m.includes("keeping previous"))).toBe(true);
     });
 
@@ -97,10 +99,10 @@ describe("ConfigStore", () => {
         });
         store.init();
         store.start();
-        expect(store.get().config.defaults.agent).toBe("claude");
+        expect(store.get().config.agent).toBe("claude");
 
         fire();
-        expect(store.get().config.defaults.agent).toBe("omp");
+        expect(store.get().config.agent).toBe("omp");
 
         store.stop();
         expect(unwatched()).toBe(true);

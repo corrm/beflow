@@ -27,7 +27,9 @@ import {
 
 const config: Config = {
     agents: { claude: { command: "claude" } },
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "autonomous" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "autonomous",
     runs: { dir: "/runs" },
     tracker: "plane",
     trackers: {},
@@ -2052,7 +2054,7 @@ describe("watchTick concurrent Todo dispatch", () => {
         // shared repo root. watch must ALWAYS force autonomous regardless of config.
         const supervisedConfig: Config = {
             ...config,
-            defaults: { ...config.defaults, runMode: "supervised" },
+            runMode: "supervised",
         };
         const tracker = new WatchTracker({
             inReview: [],

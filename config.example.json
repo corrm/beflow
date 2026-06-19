@@ -8,13 +8,11 @@
       "apiKeyEnv": "PLANE_API_KEY"
     }
   },
-  "defaults": {
-    "agent": "claude",
-    "runMode": "supervised",
-    "pr": {
-      "owner": "agent",
-      "baseBranch": "auto"
-    }
+  "agent": "claude",
+  "runMode": "supervised",
+  "pr": {
+    "owner": "agent",
+    "baseBranch": "auto"
   },
   "policy": {
     "evaluator": "globs",
@@ -77,10 +75,8 @@
         "GUI": "main_repo",
         "Website": "website"
       },
-      "defaults": {
-        "agent": "claude",
-        "runMode": "supervised"
-      }
+      "agent": "claude",
+      "runMode": "supervised"
     }
   }
 }

@@ -7,7 +7,7 @@ export interface ResolveInputs {
     meta: IssueMeta;
     project: Project;
     // Optional because the resolver is defensive: if nothing global is set it
-    // falls through to the built-in. (In practice config.defaults always fills these.)
+    // falls through to the built-in. (In practice config always fills these.)
     global: {
         agent?: string;
         routing?: { implement?: string; spec?: string; triage?: string };
@@ -39,7 +39,7 @@ export function resolveAgent(inputs: ResolveInputs, jobKind: JobKind): string {
             inputs.meta.agent,
             inputs.project.routing?.[jobKind],
             inputs.global.routing?.[jobKind],
-            inputs.project.defaults?.agent,
+            inputs.project.agent,
             inputs.global.agent,
         ) ?? AGENT_BUILTIN
     );
@@ -47,7 +47,7 @@ export function resolveAgent(inputs: ResolveInputs, jobKind: JobKind): string {
 
 export function resolveRunMode(inputs: ResolveInputs): RunMode {
     return (
-        cascade(inputs.cli.runMode, inputs.meta.runMode, inputs.project.defaults?.runMode, inputs.global.runMode) ??
+        cascade(inputs.cli.runMode, inputs.meta.runMode, inputs.project.runMode, inputs.global.runMode) ??
         RUN_MODE_BUILTIN
     );
 }
@@ -98,11 +98,11 @@ const POLICY_ON_BLOCK_BUILTIN: ResolvedPolicy["onBlock"] = "comment";
 
 /**
  * Project-over-default resolution of PR mechanics. A present `projects.<KEY>.pr`
- * replaces `defaults.pr` wholesale (no field merge); the built-in defaults
+ * replaces the top-level `pr` wholesale (no field merge); the built-in defaults
  * (`agent` / `auto`) then fill any field the chosen block leaves unset.
  */
 export function resolvePr(config: Config, registry: Registry, projectKey: string): ResolvedPr {
-    const block = registry.projects[projectKey]?.pr ?? config.defaults.pr;
+    const block = registry.projects[projectKey]?.pr ?? config.pr;
     return {
         owner: block?.owner ?? PR_OWNER_BUILTIN,
         baseBranch: block?.baseBranch ?? PR_BASE_BRANCH_BUILTIN,

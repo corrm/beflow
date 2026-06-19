@@ -102,6 +102,36 @@ and answers items in **Needs Input** when you reply. See the
 Full details — flags, examples, behavior — in the
 **[command reference](docs/commands.md)**. Every command also supports `--help`.
 
+## Configuration
+
+beflow reads `config.json` from the current directory — the tracker connection,
+your workspace + project registry, agent definitions, and global defaults. Start
+from [`config.example.json`](config.example.json):
+
+```bash
+cp config.example.json config.json
+```
+
+A project maps a key to a tracker project and the local repos its work lands in:
+
+```json
+"projects": {
+  "APP": {
+    "name": "My App",
+    "plane_project_id": "…",
+    "root": "/path/to/your/project",
+    "default_repo": "main_repo",
+    "repos": { "main_repo": "…", "website": "…" },
+    "module_repo_map": { "Backend": "main_repo", "Frontend": "website" }
+  }
+}
+```
+
+Every key — per-project overrides, agent definitions, and the opt-in gates
+(dead-letter, quality gate, SLA, CI rework, review) — is documented in the
+**[config reference](docs/config.md)**. API keys live in a gitignored `.env`
+(see `.env.example`), never in `config.json`.
+
 ## Documentation
 
 - [Command reference](docs/commands.md) — every command and flag

@@ -133,9 +133,33 @@ export function renderTask(set: PromptSet, issue: Issue, repo: string): string {
     return renderTemplate("task", set.task, buildPromptContext(issue, repo));
 }
 
-export function renderContract(set: PromptSet, jobKind: JobKind, issue: Issue, repo: string): string {
+const AGENT_OWNED_PR_INSTRUCTION = "commit, push, and open a pull request with `gh`, then put the PR URL in `prUrl`.";
+const BEFLOW_OWNED_PR_INSTRUCTION =
+    "commit and push your branch. Do NOT run `gh pr create`, `gh pr edit`, or open or update any pull request — beflow will open the PR from your pushed branch.";
+
+const AGENT_OWNED_PR_CONTINUATION_INSTRUCTION = "UPDATE the existing pull request — do not open a new one.";
+const BEFLOW_OWNED_PR_CONTINUATION_INSTRUCTION =
+    "push your changes. The existing pull request updates automatically — do NOT run `gh pr create` or `gh pr edit`.";
+
+export function renderContract(
+    set: PromptSet,
+    jobKind: JobKind,
+    issue: Issue,
+    repo: string,
+    beflowOwnsPr = false,
+): string {
     const ctx = buildPromptContext(issue, repo);
-    return `${renderTemplate(jobKind, set[jobKind], ctx)}\n\n${renderTemplate("report", set.report, ctx)}`;
+    const promptCtx =
+        jobKind === "implement"
+            ? {
+                  ...ctx,
+                  pr_continuation_instruction: beflowOwnsPr
+                      ? BEFLOW_OWNED_PR_CONTINUATION_INSTRUCTION
+                      : AGENT_OWNED_PR_CONTINUATION_INSTRUCTION,
+                  pr_instruction: beflowOwnsPr ? BEFLOW_OWNED_PR_INSTRUCTION : AGENT_OWNED_PR_INSTRUCTION,
+              }
+            : ctx;
+    return `${renderTemplate(jobKind, set[jobKind], promptCtx)}\n\n${renderTemplate("report", set.report, ctx)}`;
 }
 
 export function renderReviewContract(set: PromptSet, issue: Issue, repo: string): string {

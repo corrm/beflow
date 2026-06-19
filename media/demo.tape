@@ -7,11 +7,9 @@ Set Height 440
 Set Theme "Catppuccin Mocha"
 Set Padding 20
 Set TypingSpeed 50ms
-Set PlaybackSpeed 1.0
 
 Hide
-Type "export PATH=\"$(dirname $(realpath $0)):$PATH\"" Enter
-Type "alias beflow='bash \"$(dirname $(realpath $0))/demo.sh\"'" Enter
+Type "alias beflow='bash /home/corrm/plane-workflow/media/demo.sh'" Enter
 Type "clear" Enter
 Show
 

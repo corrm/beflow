@@ -54,7 +54,7 @@ describe("doctor", () => {
     it("all checks pass with healthy deps", async () => {
         const checks = await doctor(baseDeps());
         expect(checks.every((c) => c.level === "pass")).toBe(true);
-        expect(find(checks, "config.json").detail).toContain("plane");
+        expect(find(checks, "config").detail).toContain("plane");
     });
 
     it("fails when config load throws, capturing the error detail", async () => {
@@ -65,8 +65,8 @@ describe("doctor", () => {
                 },
             }),
         );
-        expect(find(checks, "config.json").level).toBe("fail");
-        expect(find(checks, "config.json").detail).toContain("config boom");
+        expect(find(checks, "config").level).toBe("fail");
+        expect(find(checks, "config").detail).toContain("config boom");
         // Dependent checks are skipped, not crashed
         expect(find(checks, "tracker config").level).toBe("fail");
         expect(find(checks, "API key").level).toBe("fail");

@@ -724,7 +724,7 @@ describe("runCli doctor", () => {
         try {
             const code = await runCli(["doctor"], { ...deps, cwd: "/cwd" });
             expect(code).toBe(0);
-            expect(trace.logs.some((l) => l.includes("config.json"))).toBe(true);
+            expect(trace.logs.some((l) => l.includes("✓ config —"))).toBe(true);
         } finally {
             delete process.env.BEFLOW_TEST_KEY;
         }

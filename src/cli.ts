@@ -8,6 +8,7 @@ import type { ArgsDef, CommandContext, CommandDef } from "citty";
 import { AcpxDriver, resolveAcpCommand, resolveAcpxCommand } from "./agent/acpx.ts";
 import type { AgentDriver } from "./agent/driver.ts";
 import { loadConfig, loadRegistry } from "./config/load.ts";
+import { configDir } from "./config/paths.ts";
 import type { Config, Registry } from "./config/schema.ts";
 import { ConfigStore, nodeConfigWatcher } from "./config/store.ts";
 import type { ConfigWatcher } from "./config/store.ts";
@@ -172,9 +173,9 @@ interface CliContext {
 // Builds the CliContext shared by every command that needs a tracker + prompts.
 // Config is loaded here (inside command `run` handlers) rather than in `runCli`
 // so that `--help` — which citty resolves without invoking `run` — works even
-// when config.json is missing or invalid.
+// when ~/beflow/config.json is missing or invalid.
 function loadContext(deps: CliDeps, log: (msg: string) => void, fail: (msg: string) => number): CliContext {
-    const dir = deps.cwd ?? process.cwd();
+    const dir = deps.cwd ?? configDir();
     const config = deps.loadConfig(dir);
     const registry = deps.loadRegistry(dir);
     const tracker = deps.createTracker(config, registry);
@@ -356,7 +357,7 @@ function buildCli(deps: CliDeps): Cli {
             cmdGc(
                 { force: asBool(args.force), olderThan: asStr(args["older-than"]), prune: asBool(args.prune) },
                 deps,
-                deps.cwd ?? process.cwd(),
+                deps.cwd ?? configDir(),
                 makeLog(deps),
             ),
     });

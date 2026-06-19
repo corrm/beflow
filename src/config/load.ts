@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import type { z } from "zod";
 
+import { configDir } from "./paths.ts";
 import { configSchema, fileSchema, registrySchema } from "./schema.ts";
 import type { Config, ConfigFile, Registry } from "./schema.ts";
 
@@ -34,12 +35,12 @@ function loadConfigFile(dir: string): ConfigFile {
     return loadFile(join(dir, "config.json"), fileSchema);
 }
 
-export function loadConfig(dir: string = process.cwd()): Config {
+export function loadConfig(dir: string = configDir()): Config {
     const file = loadConfigFile(dir);
     return configSchema.parse({ ...file, agents: file.agents ?? {} });
 }
 
-export function loadRegistry(dir: string = process.cwd()): Registry {
+export function loadRegistry(dir: string = configDir()): Registry {
     const file = loadConfigFile(dir);
     return registrySchema.parse(file);
 }

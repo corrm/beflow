@@ -53,10 +53,13 @@ bun run build          # optional: compile a standalone ./dist/beflow binary
 
 ```bash
 # 1. Create your config from the template and edit it
-cp config.example.json config.json
+mkdir -p ~/beflow
+cp config.example.json ~/beflow/config.json
 
-# 2. Put your tracker API token in a gitignored .env
-cp .env.example .env        # then fill in PLANE_API_KEY or LINEAR_API_KEY
+# 2. Set your tracker API token in your shell profile
+echo 'export PLANE_API_KEY=your_token_here' >> ~/.zshrc   # Plane
+# or: echo 'export LINEAR_API_KEY=your_token_here' >> ~/.zshrc   # Linear
+source ~/.zshrc
 
 # 3. Check your environment
 beflow doctor
@@ -117,12 +120,13 @@ Full details — flags, examples, behavior — in the
 
 ## Configuration
 
-beflow reads `config.json` from the current directory — the tracker connection,
-your workspace + project registry, agent definitions, and global defaults. Start
-from [`config.example.json`](config.example.json):
+beflow reads its configuration from `~/beflow/config.json` — the tracker
+connection, your workspace + project registry, agent definitions, and global
+defaults. Start from [`config.example.json`](config.example.json):
 
 ```bash
-cp config.example.json config.json
+mkdir -p ~/beflow
+cp config.example.json ~/beflow/config.json
 ```
 
 A project maps a key to a tracker project and the local repos its work lands in:
@@ -142,8 +146,8 @@ A project maps a key to a tracker project and the local repos its work lands in:
 
 Every key — per-project overrides, agent definitions, and the opt-in gates
 (dead-letter, quality gate, SLA, CI rework, review) — is documented in the
-**[config reference](docs/config.md)**. API keys live in a gitignored `.env`
-(see `.env.example`), never in `config.json`.
+**[config reference](docs/config.md)**. API keys are set in your shell profile,
+never in `~/beflow/config.json`.
 
 ## Documentation
 

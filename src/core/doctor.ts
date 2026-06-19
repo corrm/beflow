@@ -20,7 +20,7 @@ export interface DoctorDeps {
 }
 
 const API_KEY_HINT =
-    "mint a personal API token (Plane: Profile → Settings → API tokens; Linear: Settings → API → Personal keys) and put it in .env as";
+    "mint a personal API token (Plane: Profile → Settings → API tokens; Linear: Settings → API → Personal keys) and set it in your shell profile (e.g. ~/.zshrc) as";
 
 export async function doctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     const checks: DoctorCheck[] = [];
@@ -31,13 +31,13 @@ export async function doctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
         checks.push({
             detail: `loaded; active tracker "${config.tracker}"`,
             level: "pass",
-            name: "config.json",
+            name: "config",
         });
     } catch (err) {
         checks.push({
             detail: err instanceof Error ? err.message : String(err),
             level: "fail",
-            name: "config.json",
+            name: "config",
         });
     }
 
@@ -58,7 +58,7 @@ export async function doctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
         }
     } else {
         checks.push({
-            detail: "skipped — config.json did not load",
+            detail: "skipped — config did not load",
             level: "fail",
             name: "tracker config",
         });

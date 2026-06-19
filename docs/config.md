@@ -1,16 +1,18 @@
 # Config reference
 
-beflow reads a single `config.json` from the current working directory. Copy
-[`config.example.json`](../config.example.json) to `config.json` and edit it:
+beflow reads its configuration from `~/beflow/config.json`. Create the directory
+and copy the example to get started:
 
 ```bash
-cp config.example.json config.json
+mkdir -p ~/beflow
+cp config.example.json ~/beflow/config.json
 ```
 
 The file holds the tracker connection, the workspace + project registry, the
-agent definitions, and global defaults. Keep `"$schema": "./config.schema.json"`
-at the top for editor validation. API keys never live in this file — they are
-read from environment variables (see [Secrets](#secrets)).
+agent definitions, and global defaults. The shipped `config.example.json`
+includes a `$schema` pointing at the published JSON schema for editor
+validation. API keys never live in this file — they are read from environment
+variables (see [Secrets](#secrets)).
 
 Run `beflow doctor` to validate the file and your environment.
 
@@ -180,12 +182,12 @@ Each entry defines how to launch one coding-agent CLI.
 
 ## Secrets
 
-API keys are read from the environment, never from `config.json`. Put them in a
-gitignored `.env` (see `.env.example`):
+API keys are read from the environment, never from `config.json`. Set them in
+your shell profile (`~/.zshrc` or `~/.bashrc`) and reload:
 
 ```bash
-PLANE_API_KEY=...
-LINEAR_API_KEY=...
+export PLANE_API_KEY=...   # Plane
+export LINEAR_API_KEY=...  # Linear
 ```
 
 The variable names are whatever each tracker's `apiKeyEnv` points at.

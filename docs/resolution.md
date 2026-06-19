@@ -10,12 +10,12 @@ the first non-`undefined` value in a priority-ordered list wins. Empty string an
 
 Each field can be supplied from up to four sources, in priority order:
 
-| Source             | What it is                                                                            |
-| ------------------ | ------------------------------------------------------------------------------------- |
-| `cli`              | Command-line flags passed to [`beflow run`](commands.md#run-key) for this invocation. |
-| `meta`             | Per-issue metadata parsed from the issue body and labels (see below).                 |
-| `project.defaults` | The `defaults` object inside the matching project entry in `config.json`.             |
-| `global.defaults`  | The top-level `defaults` object in `config.json` (`fileSchema.defaults`).             |
+| Source    | What it is                                                                            |
+| --------- | ------------------------------------------------------------------------------------- |
+| `cli`     | Command-line flags passed to [`beflow run`](commands.md#run-key) for this invocation. |
+| `meta`    | Per-issue metadata parsed from the issue body and labels (see below).                 |
+| `project` | The matching project entry in `config.json` (e.g. its `agent` / `runMode` keys).      |
+| `global`  | The top-level keys in `config.json` (e.g. `fileSchema.agent` / `fileSchema.runMode`). |
 
 ### Per-issue metadata (`meta`)
 
@@ -53,19 +53,19 @@ The merged result is an `IssueMeta` object (`agent?`, `repo?`, `runMode?`, `jobK
 ## Agent
 
 **Precedence:** `cli.agent` → `meta.agent` → `project.routing[jobKind]` →
-`global.routing[jobKind]` → `project.defaults.agent` → `global.defaults.agent` →
+`global.routing[jobKind]` → `project.agent` → `global.agent` →
 built-in `"claude"`
 
 The built-in `"claude"` fires only when every configured source is `undefined`. In
-practice `global.defaults.agent` is always set in `config.json` (it is a required
-field in `fileSchema.defaults`), so the built-in is a last-resort safety net.
+practice `global.agent` is always set in `config.json` (it is a required top-level
+field in `fileSchema`), so the built-in is a last-resort safety net.
 
 ### Routing by job kind (opt-in)
 
 `routing.{triage,spec,implement}` maps each job kind to a configured agent **name**,
-on `defaults` (global) or `projects.<KEY>` (per-project wins). It sits between the
+top-level (global) or under `projects.<KEY>` (per-project wins). It sits between the
 per-issue `meta` and the plain default agent in the cascade above, so a routed agent
-beats `defaults.agent` but a CLI flag or per-issue label still overrides it. Absent
+beats `agent` but a CLI flag or per-issue label still overrides it. Absent
 entries fall straight through — routing is fully opt-in and degrade-safe. Because
 each agent carries its own `model` (see the `agents` map), routing a job kind to an
 agent also routes its model.
@@ -74,8 +74,8 @@ agent also routes its model.
 
 `RunMode = "autonomous" | "supervised"`
 
-**Precedence:** `cli.runMode` → `meta.runMode` → `project.defaults.runMode` →
-`global.defaults.runMode` → built-in `"supervised"`
+**Precedence:** `cli.runMode` → `meta.runMode` → `project.runMode` →
+`global.runMode` → built-in `"supervised"`
 
 Same cascade shape as agent. The built-in fallback is `"supervised"`.
 

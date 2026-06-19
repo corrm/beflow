@@ -109,7 +109,7 @@ describe("routing by jobkind", () => {
         expect(resolveAgent(inputs, "implement")).toBe("metaOverride");
     });
 
-    it("routing absent falls back to project.defaults.agent then global.agent then built-in", () => {
+    it("routing absent falls back to project.agent then global.agent then built-in", () => {
         const p: Project = { ...project, agent: "projAgent", routing: undefined };
         expect(resolveAgent(base({ project: p }), "triage")).toBe("projAgent");
 

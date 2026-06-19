@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { loadConfig, loadRegistry } from "../src/config/load.ts";
+import { CONFIG_BOOTSTRAP } from "../src/config/paths.ts";
 import { fileSchema } from "../src/config/schema.ts";
 
 const dirs: string[] = [];
@@ -52,7 +53,7 @@ const validFile = {
 } as const;
 
 describe("loadConfig", () => {
-    it("returns the config slice (tracker, defaults, agents) from config.json", () => {
+    it("returns the config slice (tracker, agent, runMode, agents) from config.json", () => {
         const dir = tmp();
         writeFileSync(join(dir, "config.json"), JSON.stringify(validFile));
         const config = loadConfig(dir);
@@ -112,5 +113,11 @@ describe("loadRegistry", () => {
 
     it("throws on missing config.json", () => {
         expect(() => loadRegistry(tmp())).toThrow(/cannot read config file/);
+    });
+});
+
+describe("CONFIG_BOOTSTRAP", () => {
+    it("the first-run bootstrap template parses against fileSchema", () => {
+        expect(fileSchema.safeParse(JSON.parse(CONFIG_BOOTSTRAP)).success).toBe(true);
     });
 });

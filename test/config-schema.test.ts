@@ -16,7 +16,7 @@ const baseFile = {
     workspace: { id: "w", slug: "your-workspace" },
 };
 
-describe("defaults.onManualMove", () => {
+describe("onManualMove", () => {
     it("defaults to yield when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
         expect(parsed.onManualMove).toBe("yield");
@@ -103,7 +103,7 @@ describe("deadLetter.maxAttempts", () => {
         expect(parsed.deadLetter?.maxAttempts).toBe(5);
     });
 
-    it("leaves defaults.deadLetter undefined when omitted", () => {
+    it("leaves deadLetter undefined when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
         expect(parsed.deadLetter).toBeUndefined();
     });
@@ -136,7 +136,7 @@ describe("qualityGate.commands", () => {
         expect(parsed.qualityGate?.commands).toEqual(["bun test"]);
     });
 
-    it("leaves defaults.qualityGate undefined when omitted", () => {
+    it("leaves qualityGate undefined when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
         expect(parsed.qualityGate).toBeUndefined();
     });
@@ -161,7 +161,7 @@ describe("qualityGate.commands", () => {
 });
 
 describe("routing schema", () => {
-    it("parses global defaults.routing", () => {
+    it("parses global routing", () => {
         const parsed = fileSchema.parse({
             ...baseFile,
             routing: { implement: "big", spec: "fast" },
@@ -171,7 +171,7 @@ describe("routing schema", () => {
         expect(parsed.routing?.triage).toBeUndefined();
     });
 
-    it("leaves defaults.routing undefined when omitted", () => {
+    it("leaves routing undefined when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
         expect(parsed.routing).toBeUndefined();
     });
@@ -213,7 +213,7 @@ describe("routing schema", () => {
 });
 
 describe("review schema", () => {
-    it("parses global defaults.review", () => {
+    it("parses global review", () => {
         const parsed = fileSchema.parse({
             ...baseFile,
             review: { enabled: true, postToPr: true },
@@ -222,7 +222,7 @@ describe("review schema", () => {
         expect(parsed.review?.postToPr).toBe(true);
     });
 
-    it("leaves defaults.review undefined when omitted", () => {
+    it("leaves review undefined when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
         expect(parsed.review).toBeUndefined();
     });
@@ -264,13 +264,13 @@ describe("review schema", () => {
     });
 });
 
-describe("defaults.telemetry", () => {
-    it("leaves defaults.telemetry undefined when omitted", () => {
+describe("telemetry", () => {
+    it("leaves telemetry undefined when omitted", () => {
         const parsed = fileSchema.parse(baseFile);
         expect(parsed.telemetry).toBeUndefined();
     });
 
-    it("parses defaults.telemetry.inComment", () => {
+    it("parses telemetry.inComment", () => {
         const parsed = fileSchema.parse({
             ...baseFile,
             telemetry: { inComment: true },

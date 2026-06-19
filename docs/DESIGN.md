@@ -345,7 +345,8 @@ A single **`config.json`** holds everything. Top-level sections:
       "plane": { "baseUrl": "https://…", "workspaceSlug": "your-workspace", "apiKeyEnv": "PLANE_API_KEY" },
       "linear": { "apiKeyEnv": "LINEAR_API_KEY" }
     },
-    "defaults": { "agent": "claude", "runMode": "supervised" }
+    "agent": "claude",
+    "runMode": "supervised"
   }
   ```
 - **`workspace` + `projects`** — project keys → repos → areas, per-project

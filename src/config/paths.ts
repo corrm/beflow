@@ -13,17 +13,15 @@ export const CONFIG_BOOTSTRAP: string =
     JSON.stringify(
         {
             $schema: "https://raw.githubusercontent.com/corrm/beflow/main/config.schema.json",
+            agent: "claude",
             agents: {
                 claude: {
                     args: ["--dangerously-skip-permissions"],
                     command: "claude",
                 },
             },
-            defaults: {
-                agent: "claude",
-                runMode: "supervised",
-            },
             projects: {},
+            runMode: "supervised",
             tracker: "plane",
             trackers: {
                 linear: { apiKeyEnv: "LINEAR_API_KEY" },

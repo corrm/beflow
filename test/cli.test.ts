@@ -551,7 +551,7 @@ describe("runCli setup", () => {
     it("passes a de-duped, sorted agent:<name> label set into the template", async () => {
         const tracker = new SetupTracker();
         const { deps } = harness(tracker);
-        // Config.defaults.agent is 'claude'; config.agents adds zeta + claude (dup).
+        // Config.agent is 'claude'; config.agents adds zeta + claude (dup).
         deps.loadConfig = () => ({
             ...config,
             agents: { claude: { command: "claude" }, zeta: { command: "zeta" } },

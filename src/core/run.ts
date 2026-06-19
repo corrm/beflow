@@ -8,7 +8,7 @@ import type { AgentDriver, AgentRunResult, RunOptions } from "../agent/driver.ts
 import type { Report, ReportStatus } from "../agent/report.ts";
 import type { Config, Project, Registry } from "../config/schema.ts";
 import type { Issue, JobKind, Resolved } from "../model/types.ts";
-import { resolve } from "../resolve/precedence.ts";
+import { resolve, resolvePolicy, resolvePr } from "../resolve/precedence.ts";
 import type { Comment, Tracker } from "../trackers/tracker.ts";
 import { renderContinuation } from "./continuation.ts";
 import { DECISION_HOLD_MESSAGE, isDecisionHeld } from "./decision.ts";
@@ -17,6 +17,10 @@ import { injectAcpxMcp, nodeMcpFs } from "./mcp.ts";
 import type { McpFs, McpServer } from "./mcp.ts";
 import { escalationDetail, notifyEscalation } from "./notify.ts";
 import type { Notifier } from "./notify.ts";
+import { computeChangedFiles, defaultPolicyExec, evaluatePolicy } from "./policy.ts";
+import type { PolicyExec, PolicyResult } from "./policy.ts";
+import { closePrAndDeleteBranch, detectBaseBranch, editPr, hasCommits, markReady, openDraftPr } from "./pr.ts";
+import type { PrRef } from "./pr.ts";
 import type { PromptSet } from "./prompts.ts";
 import { renderContract, renderLinkedContext, renderTask } from "./prompts.ts";
 import { defaultGateExec, resolveQualityGate, runQualityGate } from "./qualitygate.ts";
@@ -24,7 +28,7 @@ import type { GateExec } from "./qualitygate.ts";
 import { deleteRecord, loadRecord, resolveRunsDir, saveRecord, systemClock } from "./runstore.ts";
 import type { Clock, RunRecord, RunStoreFs } from "./runstore.ts";
 import { formatTelemetryLine, resolveTelemetryInComment } from "./runsview.ts";
-import { createWorktree, removeWorktree, resolveWorktreeDir, sanitizeKey } from "./worktree.ts";
+import { bunExec, createWorktree, removeWorktree, resolveWorktreeDir, sanitizeKey } from "./worktree.ts";
 import type { Exec } from "./worktree.ts";
 import { applyReport, buildCommentBody, defaultDoneState } from "./writeback.ts";
 import type { WritebackResult } from "./writeback.ts";
@@ -225,6 +229,8 @@ export interface RunIssueDeps {
     mcpServers?: McpServer[];
     mcpFs?: McpFs;
     gateExec?: GateExec;
+    prExec?: Exec;
+    policyExec?: PolicyExec;
 }
 
 const RESUME_STATUSES: ReadonlySet<RunRecord["status"]> = new Set([
@@ -250,6 +256,18 @@ async function postInReviewInstructionOnce(tracker: Tracker, issue: Issue, log: 
     }
     await tracker.comment(issue, IN_REVIEW_INSTRUCTION);
     log(`beflow: ${issue.key} → In Review; posted change-request instructions`);
+}
+
+function beflowPrTitle(issue: Issue): string {
+    return `[beflow] ${issue.key}: ${issue.title}`;
+}
+
+function beflowPrBody(issue: Issue, summary?: string): string {
+    const base = `Automated implementation of ${issue.key} by beflow.`;
+    if (summary !== undefined && summary.trim() !== "") {
+        return `${base}\n\n${summary.trim()}`;
+    }
+    return base;
 }
 
 export interface RunResult {
@@ -394,6 +412,15 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
     const effectiveRepoPath =
         isResume && prior !== null && prior.repoPath !== undefined ? prior.repoPath : resolved.repoPath;
 
+    // BEFLOW-OWNED PR (opt-in): when the project resolves PR ownership to `beflow`,
+    // The agent only pushes its branch — beflow opens/enriches/marks-ready the PR and
+    // Runs the post-run policy gate. This only engages for an autonomous implement run
+    // With a worktree branch; every other shape keeps the agent-owned behavior.
+    const resolvedPr = resolvePr(deps.config, deps.registry, projectKeyOf(key));
+    const resolvedPolicy = resolvePolicy(deps.config, deps.registry, projectKeyOf(key));
+    const beflowOwned =
+        resolvedPr.owner === "beflow" && useWorktree && effectiveJobKind === "implement" && branch !== undefined;
+
     // attempts counts CONSECUTIVE crash resumes only. A fresh dispatch resets to 0,
     // and a human-driven re-dispatch (rework/answered) passes a continuation, so it
     // also resets to 0 — only an unattended crash-resume increments the streak.
@@ -466,7 +493,7 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
     function buildRunOptions(runTask: string): RunOptions {
         return {
             acpCommand,
-            contract: renderContract(deps.prompts, effectiveJobKind, issue, resolved.repo),
+            contract: renderContract(deps.prompts, effectiveJobKind, issue, resolved.repo, beflowOwned),
             cwd,
             nonInteractive: "fail",
             runMode: "autonomous",
@@ -548,6 +575,68 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
         return formatTelemetryLine(result.stream.usage, telemetryModel, record.attempts);
     }
 
+    // Park the run as FAILED while KEEPING the worktree (and any draft PR): writes the
+    // Failed report back, persists a failed record, and escalates. Used by the
+    // Beflow-owned PR paths (no-op, gh/policy-layer failure) which are all retryable.
+    async function parkBeflowFailed(summary: string): Promise<RunResult> {
+        const failedReport: Report = { status: "failed", summary };
+        const failedApplied = await applyReport(deps.tracker, issue, failedReport, effectiveJobKind, telemetryLine());
+        saveRecord(
+            runsDir,
+            {
+                ...record,
+                attempts: 0,
+                report: failedReport,
+                status: "failed",
+                updatedAt: clock(),
+                ...(result.stream.usage !== undefined ? { usage: result.stream.usage } : {}),
+            },
+            deps.runsFs,
+        );
+        await notifyEscalation(deps.notify, issue, "failed", escalationDetail(failedReport));
+        return { applied: failedApplied, cwd, issue, resolved, result };
+    }
+
+    // BEFLOW-OWNED PR — STEP 1+2 (before the gate): the agent reported `done` and only
+    // Pushed its branch. First confirm it produced commits; if not, the run is empty —
+    // Park failed and keep the worktree (no PR). Otherwise open a DRAFT PR from the
+    // Pushed branch and stamp its URL onto the report so the writeback path links it.
+    // The draft is enriched + marked ready (or closed) by the post-gate policy step.
+    const prExec = deps.prExec ?? bunExec;
+    let openedPr: PrRef | undefined;
+    let beflowBase = "";
+    if (beflowOwned && branch !== undefined && result.report?.status === "done") {
+        try {
+            beflowBase = await detectBaseBranch(resolved.repo, resolvedPr.baseBranch, prExec);
+            if (!(await hasCommits(cwd, beflowBase, prExec))) {
+                log(`beflow: ${key} — agent produced no commits; parking as failed (worktree kept)`);
+                return await parkBeflowFailed(
+                    "The agent reported done but produced no commits on its branch; nothing to open a PR from.",
+                );
+            }
+            openedPr = await openDraftPr(
+                {
+                    base: beflowBase,
+                    body: beflowPrBody(issue),
+                    cwd,
+                    head: branch,
+                    repo: resolved.repo,
+                    title: beflowPrTitle(issue),
+                },
+                prExec,
+            );
+            result = { ...result, report: { ...result.report, prUrl: openedPr.url } };
+            log(`beflow: ${key} — opened draft PR ${openedPr.url}`);
+        } catch (err) {
+            log(
+                `beflow: ${key} — PR layer failed (${err instanceof Error ? err.message : String(err)}); parking as failed (worktree kept)`,
+            );
+            return await parkBeflowFailed(
+                `beflow could not open the pull request: ${err instanceof Error ? err.message : String(err)}`,
+            );
+        }
+    }
+
     // QUALITY GATE (opt-in, autonomous-only): before an implement `done` report is
     // Allowed to open a PR / advance to In Review, run the project check command(s) in
     // The worktree. On RED, re-prompt the SAME live agent session once with the failing
@@ -575,11 +664,15 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                 id: "quality-gate",
                 isBot: false,
             };
-            const reworkTask = renderContinuation(deps.prompts, {
-                newComments: [gateComment],
-                ...(result.report.prUrl !== undefined ? { prUrl: result.report.prUrl } : {}),
-                priorReport: result.report,
-            });
+            const reworkTask = renderContinuation(
+                deps.prompts,
+                {
+                    newComments: [gateComment],
+                    ...(result.report.prUrl !== undefined ? { prUrl: result.report.prUrl } : {}),
+                    priorReport: result.report,
+                },
+                beflowOwned,
+            );
             const reworked = await deps.driver.run(buildRunOptions(reworkTask), (evt) => {
                 log(`acpx: ${JSON.stringify(evt)}`);
             });
@@ -616,8 +709,13 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
             }
             if (reworked.report?.status === "done" && (reworkGate === undefined || reworkGate.passed)) {
                 // Rework produced a fresh `done` report AND the gate is green (or the
-                // Re-run threw → fail open) — adopt the new report and fall through.
-                result = reworked;
+                // Re-run threw → fail open) — adopt the new report and fall through. In
+                // Beflow-owned mode the agent never sets prUrl, so re-stamp the already
+                // Opened draft PR so the policy + writeback steps still link it.
+                result =
+                    openedPr !== undefined
+                        ? { ...reworked, report: { ...reworked.report, prUrl: openedPr.url } }
+                        : reworked;
             } else {
                 // Still red, or the rework didn't re-emit a `done` report → FAILED. Route
                 // Through applyReport(failed) + escalation, and persist the run record with
@@ -659,6 +757,96 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
         }
     }
 
+    // BEFLOW-OWNED PR — STEP 4 (after a green gate): evaluate the post-run policy over
+    // The run's diff and decide the draft PR's fate. `block` closes the PR + branch and
+    // Routes the issue to the blocked/Needs-Input path (NOT In Review); `require_approval`
+    // Enriches the body but leaves the PR draft as the review artifact; `allow` enriches
+    // And marks it ready. Any thrown PR/policy-layer error parks the run as failed while
+    // Keeping the worktree + draft PR (retryable). Decided here so the shared writeback
+    // Below still moves an allowed/approval run to In Review with the PR linked.
+    let awaitsApproval = false;
+    if (beflowOwned && openedPr !== undefined && branch !== undefined && result.report?.status === "done") {
+        const policyExec = deps.policyExec ?? defaultPolicyExec;
+        let decision: PolicyResult;
+        try {
+            const changedFiles = await computeChangedFiles(cwd, beflowBase, prExec);
+            decision = await evaluatePolicy(
+                {
+                    agent: effectiveAgent,
+                    baseBranch: beflowBase,
+                    changedFiles,
+                    issueKey: key,
+                    jobKind: effectiveJobKind,
+                    repo: resolved.repo,
+                },
+                resolvedPolicy,
+                policyExec,
+            );
+        } catch (err) {
+            log(
+                `beflow: ${key} — policy layer failed (${err instanceof Error ? err.message : String(err)}); parking as failed (worktree + draft PR kept)`,
+            );
+            return await parkBeflowFailed(
+                `beflow could not evaluate the post-run policy: ${err instanceof Error ? err.message : String(err)}`,
+            );
+        }
+
+        if (decision.decision === "block") {
+            try {
+                await closePrAndDeleteBranch(openedPr, resolved.repo, branch, cwd, prExec);
+            } catch (err) {
+                log(
+                    `beflow: ${key} — closing the blocked PR failed (${err instanceof Error ? err.message : String(err)}); parking as failed`,
+                );
+                return await parkBeflowFailed(
+                    `beflow could not close the policy-blocked pull request: ${err instanceof Error ? err.message : String(err)}`,
+                );
+            }
+            const blockedReport: Report = {
+                status: "blocked",
+                summary: `Policy blocked this change: ${decision.reason}`,
+            };
+            const blockedApplied = await applyReport(
+                deps.tracker,
+                issue,
+                blockedReport,
+                effectiveJobKind,
+                telemetryLine(),
+            );
+            saveRecord(
+                runsDir,
+                {
+                    ...record,
+                    attempts: 0,
+                    report: blockedReport,
+                    status: "blocked",
+                    updatedAt: clock(),
+                    ...(result.stream.usage !== undefined ? { usage: result.stream.usage } : {}),
+                },
+                deps.runsFs,
+            );
+            await notifyEscalation(deps.notify, issue, "blocked", escalationDetail(blockedReport));
+            log(`beflow: ${key} — policy blocked; closed PR + branch and routed to Needs Input`);
+            return { applied: blockedApplied, cwd, issue, resolved, result };
+        }
+
+        try {
+            await editPr(openedPr, resolved.repo, { body: beflowPrBody(issue, result.report.summary) }, prExec);
+            if (decision.decision === "allow") {
+                await markReady(openedPr, resolved.repo, prExec);
+            } else {
+                awaitsApproval = true;
+            }
+        } catch (err) {
+            log(
+                `beflow: ${key} — finalizing the PR failed (${err instanceof Error ? err.message : String(err)}); parking as failed (worktree + draft PR kept)`,
+            );
+            return await parkBeflowFailed(
+                `beflow could not finalize the pull request: ${err instanceof Error ? err.message : String(err)}`,
+            );
+        }
+    }
+
     let applied: WritebackResult | undefined;
     if (result.report !== null) {
         applied = await applyReport(deps.tracker, issue, result.report, effectiveJobKind, telemetryLine());
@@ -686,6 +874,12 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                 deps.runsFs,
             );
             await postInReviewInstructionOnce(deps.tracker, issue, log);
+            if (awaitsApproval) {
+                const approvalNote = `This change requires human approval before merge: the draft pull request is the review artifact. Approve it to mark it ready and merge.`;
+                await deps.tracker.comment(issue, approvalNote);
+                await notifyEscalation(deps.notify, issue, "needs_input", approvalNote);
+                log(`beflow: ${key} — policy requires approval; draft PR left for human review`);
+            }
         } else {
             if (worktreeCreated || isResume) {
                 if (git !== undefined) {

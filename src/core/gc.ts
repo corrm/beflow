@@ -43,6 +43,10 @@ export interface OrphanWorktree {
     ageDays: number;
     safe: boolean;
     heldReason?: string;
+    // Local branch to delete alongside the worktree. Set only for worktrees
+    // reaped because their run record is in the terminal `blocked` state: the
+    // worktree pins this branch and run.ts already deleted the remote.
+    blockedBranch?: string;
 }
 
 const MS_PER_DAY = 86_400_000;
@@ -100,6 +104,26 @@ async function inspectOrphan(path: string, ageDays: number, git: Exec): Promise<
     };
 }
 
+// A worktree whose run record is in the terminal `blocked` state: run.ts has
+// already closed the PR + deleted the remote branch, leaving only the local
+// worktree (which pins the local branch). Treated as safe-to-reap; the local
+// branch is deleted alongside the worktree.
+async function inspectBlocked(path: string, ageDays: number, git: Exec): Promise<OrphanWorktree> {
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    const listed = await git("git", ["-C", path, "worktree", "list", "--porcelain"]);
+    const repoPath = listed.code === 0 ? parseSourceRepo(listed.stdout) : undefined;
+    return {
+        ageDays,
+        blockedBranch: `beflow/${name}`,
+        dirty: false,
+        name,
+        path,
+        safe: true,
+        unpushed: false,
+        ...(repoPath !== undefined ? { repoPath } : {}),
+    };
+}
+
 export async function collectOrphans(opts: {
     worktreesDir: string;
     runsDir: string;
@@ -113,15 +137,21 @@ export async function collectOrphans(opts: {
     const clock = opts.clock ?? systemClock;
     const now = clockMs(clock);
 
-    const recorded = new Set(listRecords(opts.runsDir, runsFs).map((r) => sanitizeKey(r.key)));
+    const records = listRecords(opts.runsDir, runsFs);
+    const recorded = new Set(records.map((r) => sanitizeKey(r.key)));
+    const blocked = new Set(records.filter((r) => r.status === "blocked").map((r) => sanitizeKey(r.key)));
 
     const orphans: OrphanWorktree[] = [];
     for (const name of fs.listDirs(opts.worktreesDir)) {
+        const path = join(opts.worktreesDir, name);
+        const ageDays = (now - fs.mtimeMs(path)) / MS_PER_DAY;
+        if (blocked.has(name)) {
+            orphans.push(await inspectBlocked(path, ageDays, opts.git));
+            continue;
+        }
         if (recorded.has(name)) {
             continue;
         }
-        const path = join(opts.worktreesDir, name);
-        const ageDays = (now - fs.mtimeMs(path)) / MS_PER_DAY;
         orphans.push(await inspectOrphan(path, ageDays, opts.git));
     }
     return orphans;
@@ -134,19 +164,25 @@ export interface GcPlan {
 }
 
 async function removeOrphan(orphan: OrphanWorktree, git: Exec, fs: GcFs): Promise<void> {
+    let removedViaGit = false;
     if (orphan.repoPath !== undefined) {
         try {
             await removeWorktree(orphan.repoPath, orphan.path, git);
-            return;
+            removedViaGit = true;
         } catch {
             // `git worktree remove` failed (e.g. locked/corrupt); fall back to
             // a raw recursive delete plus a best-effort prune of the dangling
             // administrative entry in the source repo.
         }
     }
-    fs.removeDir(orphan.path);
-    if (orphan.repoPath !== undefined) {
-        await git("git", ["-C", orphan.repoPath, "worktree", "prune"]);
+    if (!removedViaGit) {
+        fs.removeDir(orphan.path);
+        if (orphan.repoPath !== undefined) {
+            await git("git", ["-C", orphan.repoPath, "worktree", "prune"]);
+        }
+    }
+    if (orphan.blockedBranch !== undefined && orphan.repoPath !== undefined) {
+        await git("git", ["-C", orphan.repoPath, "branch", "-D", orphan.blockedBranch]);
     }
 }
 
@@ -198,11 +234,13 @@ export async function runGc(opts: {
     if (prune) {
         for (const orphan of plan.pruned) {
             await removeOrphan(orphan, opts.git, fs);
-            log(`gc: removed orphan worktree ${orphan.path}`);
+            log(`gc: removed ${orphan.blockedBranch !== undefined ? "blocked" : "orphan"} worktree ${orphan.path}`);
         }
     } else {
         for (const orphan of plan.pruned) {
-            log(`gc: would remove orphan worktree ${orphan.path}`);
+            log(
+                `gc: would remove ${orphan.blockedBranch !== undefined ? "blocked" : "orphan"} worktree ${orphan.path}`,
+            );
         }
     }
 

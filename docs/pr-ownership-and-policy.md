@@ -1,0 +1,242 @@
+# PR ownership and policy
+
+This document covers two related features that ship together: **beflow-owned PR
+creation** (`defaults.pr.owner: "beflow"`) and the **post-run policy gate**
+(`policy`). Both are opt-in and affect only autonomous `implement` runs with a
+worktree.
+
+---
+
+## PR ownership modes
+
+### `owner: "agent"` (default, back-compatible)
+
+The agent handles the full GitHub workflow. It commits, pushes, and opens the
+pull request using whatever tools it has available (typically `gh`). beflow
+writes back the PR URL from the agent's structured report. This is the default
+behavior and requires no config change.
+
+### `owner: "beflow"`
+
+The agent commits and pushes its branch, but **does not open a PR**. beflow
+takes over from there: it opens a draft PR, runs the quality gate, evaluates
+post-run policy, enriches the PR body, and then either marks the PR ready,
+leaves it as a draft requiring human approval, or closes it. The board is
+updated to reflect the outcome in every case.
+
+Set this globally or per project:
+
+```json
+"defaults": {
+  "pr": {
+    "owner": "beflow",
+    "baseBranch": "auto"
+  }
+}
+```
+
+`baseBranch: "auto"` (the only supported value) tells beflow to detect the
+repo's default branch at runtime. The `baseBranch` field accepts any string;
+`"auto"` is the conventional value used in `config.example.json`.
+
+---
+
+## The beflow-owned pipeline
+
+When `owner: "beflow"` is active, an autonomous `implement` run proceeds through
+these steps:
+
+1. **Decision gate** — if the issue carries a `needs-decision` label, it is
+   parked to **Needs Input** immediately and a hold record is written. The label
+   is the opt-in; removing it releases the issue back to Todo.
+
+2. **Input-quality gate** — if the issue body is below the configured
+   `minBodyChars` threshold, it is parked to **Needs Input** before any worktree
+   is created, so no agent run is burned on an under-specified issue.
+
+3. **Create worktree** — beflow creates an isolated git worktree at
+   `beflow/<key>` (under `worktrees.dir`). The agent runs inside it.
+
+4. **Agent run** — the agent commits and pushes its branch. The contract
+   explicitly instructs it not to open a PR; that step belongs to beflow.
+
+5. **No-op check** — after the agent reports `done`, beflow checks whether the
+   branch has any commits ahead of the base. If not (empty output), the run is
+   parked as **failed** and the worktree is kept for inspection.
+
+6. **Open draft PR** — beflow opens a draft PR titled
+   `[beflow] <KEY>: <title>` from the pushed branch. The draft is the review
+   artifact for the rest of the pipeline.
+
+7. **Quality gate** — if `qualityGate.commands` are configured, they run in the
+   worktree. On RED, the agent is re-prompted once with the failing output. If
+   it is still RED after rework, the run is parked as **failed** (the draft PR
+   is kept).
+
+8. **Post-run policy** — beflow evaluates the configured policy over the diff
+   and decides the PR's fate (see [Policy outcomes](#policy-outcomes) below).
+
+9. **Write back** — the board is updated and a comment is posted with the run
+   summary and PR link.
+
+---
+
+## Policy outcomes
+
+| Decision           | What beflow does                                                                                                                                                     |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allow`            | Enriches the PR body with the agent's summary, marks the PR **ready for review**, and moves the issue to **In Review**.                                              |
+| `require_approval` | Enriches the PR body, leaves the PR as a **draft**, moves the issue to **In Review**, and posts an awaits-approval note asking a human to approve and mark it ready. |
+| `block`            | Closes the PR and deletes the branch, then routes the issue to **Needs Input** with a comment explaining the block reason.                                           |
+
+A `block` or `require_approval` decision is pre-PR governance: it runs before
+the PR is visible to reviewers. It complements (and does not replace) GitHub
+branch protection rules.
+
+---
+
+## Config reference
+
+### `defaults.pr`
+
+Applies globally unless a project-level `pr` block overrides it wholesale.
+
+```json
+"defaults": {
+  "pr": {
+    "owner": "agent",
+    "baseBranch": "auto"
+  }
+}
+```
+
+| Field        | Type                    | Description                                                             |
+| ------------ | ----------------------- | ----------------------------------------------------------------------- |
+| `owner`      | `"agent"` \| `"beflow"` | Who opens the PR. `"agent"` is the default.                             |
+| `baseBranch` | `string`                | The PR base branch. Use `"auto"` to detect the repo default at runtime. |
+
+### `policy`
+
+Applies globally unless a project-level `policy` block overrides it wholesale.
+
+```json
+"policy": {
+  "evaluator": "globs",
+  "onBlock": "comment",
+  "rules": [
+    { "paths": ["infra/**", "**/*.tf"], "decision": "require_approval" },
+    { "paths": [".github/**"],          "decision": "block" }
+  ]
+}
+```
+
+| Field       | Type                                | Description                                                                         |
+| ----------- | ----------------------------------- | ----------------------------------------------------------------------------------- |
+| `evaluator` | `"globs"` \| `"command"` \| `"off"` | How the policy is evaluated.                                                        |
+| `rules`     | `Rule[]`                            | Ordered list of match rules (used when `evaluator` is `"globs"`).                   |
+| `command`   | `string[]`                          | Command + args to invoke (used when `evaluator` is `"command"`).                    |
+| `onBlock`   | `"comment"`                         | Side-effect on a `block` decision. `"comment"` posts the block reason to the issue. |
+
+#### `policy.rules[]`
+
+Each rule is matched in order; the first match wins. A rule with no `paths` or
+`agent` filter matches everything and acts as a default.
+
+| Field      | Type                                           | Description                                                  |
+| ---------- | ---------------------------------------------- | ------------------------------------------------------------ |
+| `paths`    | `string[]`                                     | Glob patterns matched against the files changed in the diff. |
+| `agent`    | `string`                                       | Match only when this agent ran the job.                      |
+| `decision` | `"allow"` \| `"require_approval"` \| `"block"` | Required. The outcome when this rule matches.                |
+
+#### `evaluator: "globs"` example
+
+```json
+"policy": {
+  "evaluator": "globs",
+  "onBlock": "comment",
+  "rules": [
+    { "paths": ["infra/**", "**/*.tf"], "decision": "require_approval" },
+    { "paths": [".github/**"],          "decision": "block" },
+    {                                   "decision": "allow" }
+  ]
+}
+```
+
+Rules are evaluated in order. The final catch-all rule (no filters) ensures
+every run gets an explicit decision.
+
+#### `evaluator: "command"` example
+
+Use `"command"` to implement arbitrary policy logic — including AGENTOWNERS-style
+ownership files — behind a single hook. beflow is not opinionated about the
+format of the ownership file; the hook can implement whatever convention suits
+the repo.
+
+```json
+"policy": {
+  "evaluator": "command",
+  "command": ["node", "scripts/policy-check.js"]
+}
+```
+
+beflow invokes the command and passes the change context as JSON on stdin:
+
+```json
+{
+  "issueKey": "APP-42",
+  "agent": "claude",
+  "jobKind": "implement",
+  "repo": "main_repo",
+  "baseBranch": "main",
+  "changedFiles": ["src/api/auth.ts", "infra/rds.tf"]
+}
+```
+
+The command must write a single JSON object to stdout and exit 0:
+
+```json
+{ "decision": "require_approval", "reason": "infra/rds.tf requires ops approval" }
+```
+
+`decision` must be one of `"allow"`, `"require_approval"`, or `"block"`.
+`reason` is included in the block comment and the tracker writeback when
+provided. A non-zero exit or unparseable output causes the run to be parked as
+failed (the worktree and draft PR are kept for inspection).
+
+### Project-level overrides
+
+A `projects.<KEY>.pr` or `projects.<KEY>.policy` block **replaces** the
+corresponding global block wholesale — it does not merge with it. Use this when
+a project needs different PR defaults or policy rules from the rest of the
+workspace.
+
+```json
+"projects": {
+  "INFRA": {
+    "pr": { "owner": "beflow", "baseBranch": "auto" },
+    "policy": {
+      "evaluator": "globs",
+      "onBlock": "comment",
+      "rules": [
+        { "decision": "require_approval" }
+      ]
+    }
+  }
+}
+```
+
+---
+
+## Scope
+
+The beflow-owned PR pipeline and the post-run policy gate engage **only** for
+autonomous (`--auto`) `implement` runs that use a worktree. They have no effect
+on:
+
+- Supervised (`--attend`) or open (`--open`) runs — a human is present in those
+  modes and governs the outcome directly.
+- Non-`implement` job kinds (`spec`, `triage`, `review`).
+- Runs where `pr.owner` resolves to `"agent"` (the default).
+
+Policy `block` and `require_approval` decisions operate before the PR is visible
+to GitHub reviewers and complement (not replace) GitHub branch protection rules.

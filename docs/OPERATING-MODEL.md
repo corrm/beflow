@@ -32,7 +32,7 @@ narrow dispatch to the active cycle, but the core model does not require them.
 Instead of estimating how much work fits in a period, beflow enforces
 **work-in-progress limits** on the active lanes:
 
-- **In Progress** is capped (`limits.inProgress`, default 3) — beflow dispatches
+- **In Progress** is capped ([`limits.inProgress`](config.md#projects), default 3) — beflow dispatches
   from Todo only up to the remaining headroom under this cap.
 - **In Review** is capped (`limits.inReview`, default 5) — this is the lane that
   protects _you_. Pull requests pile up here waiting on human review, and the cap
@@ -95,7 +95,7 @@ code they govern. When standards change, you change them in one place — the re
 ## One project, several repos
 
 A project on the board can span several git repositories. A single work item maps
-to the repo (or repos) its code area lives in via `module_repo_map`: a **module**
+to the repo (or repos) its code area lives in via [`module_repo_map`](config.md#projects): a **module**
 names a code area, and the map resolves that module to the repository beflow
 should check out and open a PR against.
 

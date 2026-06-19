@@ -133,7 +133,7 @@ workspace-level toggle). When `opts.prune` is true, also delete orphan entities
 (those present in the tracker but absent from the template) and record them in
 `pruned`. When `opts.resolveModuleChanges` is provided, call it with the
 `ModuleChange` diff before pruning modules so the caller can rename instead of
-delete.
+delete. Called by [`beflow setup`](commands.md#setup-project--update-project).
 
 **`createProject(spec)`** — Create a new project from `ProjectCreateSpec`.
 Return `ProjectCreateResult`, which carries the tracker-internal project ID in
@@ -163,7 +163,7 @@ interface Issue {
 }
 ```
 
-`areas` drives repo resolution via `module_repo_map` in
+`areas` drives repo resolution via [`module_repo_map`](config.md#projects) in
 `config.json`'s `projects.<KEY>`.
 
 ### `StateGroup`
@@ -175,7 +175,7 @@ type StateGroup = "backlog" | "unstarted" | "started" | "completed" | "cancelled
 Map your tracker's statuses onto this five-value enum. beflow's default board
 uses: `Backlog` → `backlog`, `Todo` → `unstarted`, `In Progress` → `started`,
 `Needs Input` → `started`, `In Review` → `started`, `Done` → `completed`,
-`Cancelled` → `cancelled`.
+`Cancelled` → `cancelled`. See [lifecycle.md](lifecycle.md) for the full board state reference.
 
 ### `IssueMeta`
 

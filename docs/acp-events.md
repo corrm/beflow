@@ -17,9 +17,9 @@ acpx --format json --json-strict --cwd <repo> <permission-flag> \
 - `--format json` emits the **raw ACP JSON-RPC** wire stream as NDJSON (one JSON
   object per line). `--json-strict` suppresses non-JSON noise on stderr — always
   pair them.
-- `<permission-flag>`: `--approve-all` in autonomous mode; `--approve-reads` in
+- `<permission-flag>`: `--approve-all` in [autonomous mode](resolution.md#run-mode); `--approve-reads` in
   supervised mode.
-- `--append-system-prompt` carries the jobKind contract when one is configured.
+- `--append-system-prompt` carries the [jobKind](resolution.md#job-kind) contract when one is configured.
 - `--timeout` asks acpx to cooperatively stop after that many seconds; beflow adds
   a hard-kill grace window on top.
 - `prompt -s <SESSION-KEY>` sends a prompt to a named, resumable session scoped by

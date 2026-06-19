@@ -294,7 +294,7 @@ For the full cascade detail and all recognized label forms, see [`resolution.md`
 in v1 (no server, no webhook). On each tick it:
 
 1. Counts issues currently `In Progress` and `In Review` against the project's
-   capacity caps (`limits.inProgress`, `limits.inReview` in `config.json`).
+   capacity caps ([`limits.inProgress`, `limits.inReview`](config.md#projects) in `config.json`).
 2. If under cap, fetches `Todo` issues ordered by priority.
 3. Filters out issues that are quarantined (label `beflow:quarantined`), blocked
    by unfinished dependencies (`blockedBy`), or (when `scheduling.activeCycleOnly`
@@ -306,10 +306,10 @@ in v1 (no server, no webhook). On each tick it:
      continuation prompt (the review comment thread as context).
    - Issues in `In Review` with `needs-decision` → move to Needs Input with the
      open question surfaced as a comment.
-   - When `ci.autoReworkOnRed` is enabled, CI-failing PRs trigger a rework
+   - When [`ci.autoReworkOnRed`](config.md#projects) is enabled, CI-failing PRs trigger a rework
      dispatch with the failure details as continuation context. Loop-safe: never
      reworks the same head SHA twice; quarantines a perpetually red PR once the
-     attempt counter hits the dead-letter threshold.
+     attempt counter hits the [`deadLetter`](config.md#defaults) threshold.
    - Stale `In Progress` issues past the configured SLA window get a nudge comment.
 6. Sleeps for `--interval` seconds (default 30) and repeats.
 

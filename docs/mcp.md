@@ -1,7 +1,7 @@
 # MCP servers (per-run, via acpx)
 
 beflow can hand the coding agent a set of **MCP servers** on a per-run basis. When
-`mcp.enabled` is `true` in `config.json`, beflow reads a user `.mcp.json`, translates
+[`mcp.enabled`](config.md#top-level) is `true` in `config.json`, beflow reads a user `.mcp.json`, translates
 it to the ACP `McpServer` shape, and injects it as a managed `.acpxrc.json` into the
 agent's working directory. acpx merges `<cwd>/.acpxrc.json` and forwards its
 `mcpServers` to the ACP `session/new` request.

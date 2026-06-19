@@ -10,12 +10,12 @@ the first non-`undefined` value in a priority-ordered list wins. Empty string an
 
 Each field can be supplied from up to four sources, in priority order:
 
-| Source             | What it is                                                                |
-| ------------------ | ------------------------------------------------------------------------- |
-| `cli`              | Command-line flags passed to `beflow run` for this invocation.            |
-| `meta`             | Per-issue metadata parsed from the issue body and labels (see below).     |
-| `project.defaults` | The `defaults` object inside the matching project entry in `config.json`. |
-| `global.defaults`  | The top-level `defaults` object in `config.json` (`fileSchema.defaults`). |
+| Source             | What it is                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------- |
+| `cli`              | Command-line flags passed to [`beflow run`](commands.md#run-key) for this invocation. |
+| `meta`             | Per-issue metadata parsed from the issue body and labels (see below).                 |
+| `project.defaults` | The `defaults` object inside the matching project entry in `config.json`.             |
+| `global.defaults`  | The top-level `defaults` object in `config.json` (`fileSchema.defaults`).             |
 
 ### Per-issue metadata (`meta`)
 
@@ -112,7 +112,7 @@ filesystem path).
 
 Area-derived uses only the **primary area** (first element of `issue.areas`):
 `project.module_repo_map[areas[0]]`. If the issue has no areas, or the primary
-area has no entry in `module_repo_map`, this slot is skipped.
+area has no entry in [`module_repo_map`](config.md#projects), this slot is skipped.
 
 If all four slots are `undefined`, beflow throws:
 

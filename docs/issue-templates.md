@@ -27,20 +27,20 @@ and write the issue for you.
 
 The frontmatter is a YAML object. Only `name` and `description` are required.
 
-| Field         | Type                                              | Meaning                                                                        |
-| ------------- | ------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `name`        | string (**required**)                             | The template id — the file stem and the argument to `beflow new <KEY> <name>`. |
-| `description` | string (**required**)                             | One-line summary shown in the interactive template picker.                     |
-| `agent`       | string                                            | Pins the agent → emits an `agent:<name>` picker label on the new card.         |
-| `jobKind`     | `triage` \| `spec` \| `implement`                 | Pins the lifecycle job kind → emits a `jobkind:<jobKind>` picker label.        |
-| `runMode`     | `autonomous` \| `supervised`                      | Pins the run mode → emits a `run:<mode>` picker label.                         |
-| `type`        | string                                            | The work-item type (e.g. `Bug`, `Feature`, `Spike`).                           |
-| `priority`    | `urgent` \| `high` \| `medium` \| `low` \| `none` | The work-item priority.                                                        |
-| `state`       | string                                            | The state the issue is created into (defaults to `Backlog`).                   |
-| `labels`      | string[]                                          | Extra labels attached on creation, on top of the picker labels.                |
-| `enrich`      | bool (default `false`)                            | Run the agent read-only to author the body before the preview.                 |
-| `title`       | string                                            | A `{{key}}` pattern for the title (see [Title](#title)).                       |
-| `questions`   | question[] (default `[]`)                         | The typed inputs collected from the operator (see [Questions](#questions)).    |
+| Field         | Type                                              | Meaning                                                                                           |
+| ------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `name`        | string (**required**)                             | The template id — the file stem and the argument to `beflow new <KEY> <name>`.                    |
+| `description` | string (**required**)                             | One-line summary shown in the interactive template picker.                                        |
+| `agent`       | string                                            | Pins the agent → emits an `agent:<name>` picker label on the new card.                            |
+| `jobKind`     | `triage` \| `spec` \| `implement`                 | Pins the lifecycle [job kind](resolution.md#job-kind) → emits a `jobkind:<jobKind>` picker label. |
+| `runMode`     | `autonomous` \| `supervised`                      | Pins the [run mode](resolution.md#run-mode) → emits a `run:<mode>` picker label.                  |
+| `type`        | string                                            | The work-item type (e.g. `Bug`, `Feature`, `Spike`).                                              |
+| `priority`    | `urgent` \| `high` \| `medium` \| `low` \| `none` | The work-item priority.                                                                           |
+| `state`       | string                                            | The state the issue is created into (defaults to `Backlog`).                                      |
+| `labels`      | string[]                                          | Extra labels attached on creation, on top of the picker labels.                                   |
+| `enrich`      | bool (default `false`)                            | Run the agent read-only to author the body before the preview.                                    |
+| `title`       | string                                            | A `{{key}}` pattern for the title (see [Title](#title)).                                          |
+| `questions`   | question[] (default `[]`)                         | The typed inputs collected from the operator (see [Questions](#questions)).                       |
 
 ## Questions
 
@@ -99,7 +99,7 @@ by giving it a new name.
 
 A template's `agent`, `jobKind`, and `runMode` are translated to the board's **picker
 labels** on creation: `agent:<name>`, `jobkind:<jobKind>`, `run:<mode>`. The board
-provisions these labels through `beflow setup` / `beflow update` — the `jobkind:*`
+provisions these labels through [`beflow setup` / `beflow update`](commands.md#setup-project--update-project) — the `jobkind:*`
 labels (`jobkind:triage`, `jobkind:spec`, `jobkind:implement`) are seeded alongside the
 `run:*` pickers. After adding a template that pins a new `jobKind`, run
 `beflow update <KEY>` once so the label exists. `createIssue` resolves each picker

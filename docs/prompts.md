@@ -32,7 +32,7 @@ issue fields.
 
 ### Issue-authoring template (`issue-enrich.md`)
 
-`issue-enrich.md` is a separate prompt used only by `beflow new --enrich`. It is
+`issue-enrich.md` is a separate prompt used only by [`beflow new`](commands.md#new-project-template) `--enrich`. It is
 **not** part of `PromptSet` and is loaded on demand by `loadEnrichPrompt`. It rides
 the same override cascade as the rest of the templates. For the `beflow new`
 issue-template system (the per-type Markdown frontmatter files), see
@@ -62,7 +62,7 @@ For each template, beflow resolves the first readable file in this order
 (highest priority first) and falls back to the compiled-in default if none exist:
 
 1. `<configDir>/prompts/<name>.md` — project-local, beside the `config.json` beflow loaded.
-2. `<prompts.dir>/<name>.md` — the directory named by the optional `prompts.dir`
+2. `<prompts.dir>/<name>.md` — the directory named by the optional [`prompts.dir`](config.md#top-level)
    config key (a leading `~` expands to your home directory).
 3. `~/.beflow/prompts/<name>.md` — your personal global override.
 4. The compiled-in default (embedded in the binary at build time).

@@ -112,6 +112,48 @@ or a Linear team) and the local repos its work lands in.
 Per-project `deadLetter`, `inputQuality`, `qualityGate`, `review`, `sla`, and
 `telemetry` mirror their [Defaults](#defaults) counterparts and override them.
 
+### Repos: one project, several repositories
+
+A beflow project is a single board, but the work on it often lands in **more
+than one git repository** — say a backend service, a marketing site, and a
+shared library. `repos` is the map from a short **repo key** to that
+repository's absolute path on disk; it is the set of repositories a run is
+allowed to touch. (`root` is just the common parent directory; `beflow doctor`
+checks that `root` and every `repos` path exist.)
+
+When beflow runs a work item it resolves **which** repo the agent works in, then
+runs the agent in a git worktree of that repo:
+
+1. `--repo <key>` on the command line wins, if given.
+2. otherwise `module_repo_map` routes by the item's module — the board module
+   maps to a repo key.
+3. otherwise `default_repo` is the fallback.
+
+See [resolution](resolution.md#repo) for the full cascade.
+
+```json
+"APP": {
+  "name": "My App",
+  "root": "/home/you/projects/app",
+  "default_repo": "api",
+  "repos": {
+    "api": "/home/you/projects/app/api",
+    "web": "/home/you/projects/app/web",
+    "shared": "/home/you/projects/app/shared"
+  },
+  "module_repo_map": {
+    "Backend": "api",
+    "Frontend": "web",
+    "Shared Library": "shared"
+  }
+}
+```
+
+With the above, a work item filed under the **Backend** module runs in `api`, a
+**Frontend** item in `web`, and a **Shared Library** item in `shared`. An item
+with no module (or one not in the map) falls back to `default_repo` (`api`).
+Override per run with `beflow run APP-42 --repo web`.
+
 ## Agents
 
 Each entry defines how to launch one coding-agent CLI.

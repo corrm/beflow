@@ -70,4 +70,5 @@ printf "${GRAY}[09:16:04]${RESET} scanning queue…\n"
 sleep 0.7
 printf "           Todo ${YELLOW}▸ 1${RESET}   In Review ${CYAN}▸ 2${RESET}  ${DIM}(limit: 2)${RESET}\n"
 printf "\n"
-sleep 30  # tape sends Ctrl+C after this
+printf "${GRAY}[09:16:34]${RESET} ${DIM}next scan in 30s…${RESET}\n"
+sleep 2

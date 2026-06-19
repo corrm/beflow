@@ -3,6 +3,8 @@
 **An AI-agent orchestration CLI that drives your issue tracker's backlog to
 shipped PRs.**
 
+[![npm](https://img.shields.io/npm/v/beflow?style=flat-square)](https://www.npmjs.com/package/beflow) [![CI](https://img.shields.io/github/actions/workflow/status/corrm/beflow/ci.yml?branch=main&style=flat-square)](https://github.com/corrm/beflow/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/github/license/corrm/beflow?style=flat-square)](https://github.com/corrm/beflow/blob/main/LICENSE)
+
 ![beflow demo](media/demo.gif)
 
 beflow turns work items on a project board ([Plane](https://plane.so) or

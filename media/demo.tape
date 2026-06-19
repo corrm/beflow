@@ -17,5 +17,4 @@ Type "beflow watch APP"
 Sleep 600ms
 Enter
 Sleep 22000ms
-Ctrl+C
-Sleep 1500ms
+Sleep 2500ms

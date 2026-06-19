@@ -1,0 +1,26 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 120,
+  "endOfLine": "lf",
+  "insertFinalNewline": true,
+  "useTabs": false,
+  "tabWidth": 4,
+  "trailingComma": "all",
+  "semi": true,
+  "singleQuote": false,
+  "jsxSingleQuote": false,
+  "quoteProps": "consistent",
+  "objectWrap": "preserve",
+  "arrowParens": "always",
+  "sortPackageJson": true,
+  "sortImports": true,
+  "sortTailwindcss": true,
+  "overrides": [
+    {
+      "files": ["*.json", "*.jsonc", "*.yml", "*.md"],
+      "options": {
+        "tabWidth": 2,
+      },
+    },
+  ],
+}

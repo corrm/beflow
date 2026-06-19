@@ -1,0 +1,72 @@
+{
+  "name": "beflow",
+  "version": "0.1.0",
+  "description": "An AI-agent orchestration CLI that drives your issue tracker's backlog to shipped PRs.",
+  "keywords": [
+    "acp",
+    "agent",
+    "ai",
+    "automation",
+    "bun",
+    "cli",
+    "issue-tracker",
+    "linear",
+    "orchestration",
+    "plane"
+  ],
+  "homepage": "https://github.com/corrm/beflow#readme",
+  "bugs": {
+    "url": "https://github.com/corrm/beflow/issues"
+  },
+  "license": "MIT",
+  "author": "CorrM (Islam Nofl)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/corrm/beflow.git"
+  },
+  "bin": {
+    "beflow": "./src/cli.ts"
+  },
+  "files": [
+    "src",
+    "config.example.json",
+    "config.schema.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "module": "src/index.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "check": "oxfmt --check . && oxlint && tsc --noEmit && bun test",
+    "test": "bun test",
+    "start": "bun src/cli.ts",
+    "build": "bun build --compile --outfile dist/beflow ./src/cli.ts",
+    "gen:schema": "bun scripts/gen-config-schema.ts"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.5.1",
+    "@linear/sdk": "^86.0.0",
+    "citty": "^0.2.2",
+    "yaml": "^2.9.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "bun-types": "^1.1.0",
+    "oxfmt": "^0.54.0",
+    "oxlint": "^1.69.0",
+    "oxlint-tsgolint": "^0.23.0",
+    "typescript": "^6.0.3",
+    "zod-to-json-schema": "^3.25.2"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  }
+}

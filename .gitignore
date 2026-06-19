@@ -1,0 +1,18 @@
+.env
+.env.*
+!.env.example
+node_modules
+*.log
+.beflow/
+dist/
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
+
+# local working config (use config.example.json as template)
+config.json
+
+# local dev tooling
+.codegraph/
+.mcp.json

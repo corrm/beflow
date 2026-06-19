@@ -1,0 +1,413 @@
+{
+  "$ref": "#/definitions/BeflowConfig",
+  "definitions": {
+    "BeflowConfig": {
+      "type": "object",
+      "properties": {
+        "$schema": {
+          "type": "string"
+        },
+        "_comment": {
+          "type": "string"
+        },
+        "tracker": {
+          "type": "string",
+          "enum": ["plane", "linear"]
+        },
+        "trackers": {
+          "type": "object",
+          "properties": {
+            "linear": {
+              "type": "object",
+              "properties": {
+                "apiKeyEnv": {
+                  "type": "string"
+                }
+              },
+              "required": ["apiKeyEnv"],
+              "additionalProperties": false
+            },
+            "plane": {
+              "type": "object",
+              "properties": {
+                "baseUrl": {
+                  "type": "string"
+                },
+                "workspaceSlug": {
+                  "type": "string"
+                },
+                "apiKeyEnv": {
+                  "type": "string"
+                }
+              },
+              "required": ["baseUrl", "workspaceSlug", "apiKeyEnv"],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "defaults": {
+          "type": "object",
+          "properties": {
+            "agent": {
+              "type": "string"
+            },
+            "runMode": {
+              "type": "string",
+              "enum": ["autonomous", "supervised"]
+            },
+            "assignee": {
+              "type": "string"
+            },
+            "deadLetter": {
+              "type": "object",
+              "properties": {
+                "maxAttempts": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            },
+            "inputQuality": {
+              "type": "object",
+              "properties": {
+                "minBodyChars": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            },
+            "linkedContext": {
+              "type": "boolean"
+            },
+            "onManualMove": {
+              "type": "string",
+              "enum": ["yield", "abort"],
+              "default": "yield"
+            },
+            "qualityGate": {
+              "type": "object",
+              "properties": {
+                "commands": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "review": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean"
+                },
+                "postToPr": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            },
+            "routing": {
+              "type": "object",
+              "properties": {
+                "implement": {
+                  "type": "string"
+                },
+                "spec": {
+                  "type": "string"
+                },
+                "triage": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            },
+            "sla": {
+              "type": "object",
+              "properties": {
+                "inReviewMinutes": {
+                  "type": "number"
+                },
+                "needsInputMinutes": {
+                  "type": "number"
+                }
+              },
+              "additionalProperties": false
+            },
+            "telemetry": {
+              "type": "object",
+              "properties": {
+                "inComment": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "required": ["agent", "runMode"],
+          "additionalProperties": false
+        },
+        "worktrees": {
+          "type": "object",
+          "properties": {
+            "dir": {
+              "type": "string"
+            }
+          },
+          "required": ["dir"],
+          "additionalProperties": false
+        },
+        "mcp": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "runs": {
+          "type": "object",
+          "properties": {
+            "dir": {
+              "type": "string"
+            }
+          },
+          "required": ["dir"],
+          "additionalProperties": false
+        },
+        "tools": {
+          "type": "object",
+          "properties": {
+            "acpx": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "prompts": {
+          "type": "object",
+          "properties": {
+            "dir": {
+              "type": "string"
+            }
+          },
+          "required": ["dir"],
+          "additionalProperties": false
+        },
+        "workspace": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "slug": {
+              "type": "string"
+            }
+          },
+          "required": ["id", "slug"],
+          "additionalProperties": false
+        },
+        "projects": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "default_repo": {
+                "type": "string"
+              },
+              "defaults": {
+                "type": "object",
+                "properties": {
+                  "agent": {
+                    "type": "string"
+                  },
+                  "runMode": {
+                    "type": "string",
+                    "enum": ["autonomous", "supervised"]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "ci": {
+                "type": "object",
+                "properties": {
+                  "autoReworkOnRed": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "deadLetter": {
+                "type": "object",
+                "properties": {
+                  "maxAttempts": {
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "inputQuality": {
+                "type": "object",
+                "properties": {
+                  "minBodyChars": {
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "limits": {
+                "type": "object",
+                "properties": {
+                  "inReview": {
+                    "type": "number"
+                  },
+                  "inProgress": {
+                    "type": "number"
+                  },
+                  "maxRunMinutes": {
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "module_repo_map": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "name": {
+                "type": "string"
+              },
+              "plane_project_id": {
+                "type": "string"
+              },
+              "qualityGate": {
+                "type": "object",
+                "properties": {
+                  "commands": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              "repos": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "review": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "postToPr": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "root": {
+                "type": "string"
+              },
+              "routing": {
+                "type": "object",
+                "properties": {
+                  "implement": {
+                    "type": "string"
+                  },
+                  "spec": {
+                    "type": "string"
+                  },
+                  "triage": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "scheduling": {
+                "type": "object",
+                "properties": {
+                  "activeCycleOnly": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "sla": {
+                "type": "object",
+                "properties": {
+                  "inReviewMinutes": {
+                    "type": "number"
+                  },
+                  "needsInputMinutes": {
+                    "type": "number"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "telemetry": {
+                "type": "object",
+                "properties": {
+                  "inComment": {
+                    "type": "boolean"
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "required": ["default_repo", "module_repo_map", "name", "repos", "root"],
+            "additionalProperties": false
+          }
+        },
+        "agents": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "command": {
+                "type": "string"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "acpCommand": {
+                "type": "string"
+              },
+              "acpArgs": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "model": {
+                "type": "string"
+              },
+              "permissionPolicy": {}
+            },
+            "required": ["command"],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": ["tracker", "trackers", "defaults", "workspace", "projects"],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,0 +1,68 @@
+{
+  "$schema": "./config.schema.json",
+  "tracker": "plane",
+  "trackers": {
+    "plane": {
+      "baseUrl": "https://api.plane.so",
+      "workspaceSlug": "your-workspace",
+      "apiKeyEnv": "PLANE_API_KEY"
+    }
+  },
+  "defaults": {
+    "agent": "claude",
+    "runMode": "supervised"
+  },
+  "worktrees": {
+    "dir": "~/.beflow/worktrees"
+  },
+  "runs": {
+    "dir": "~/.beflow/runs"
+  },
+  "tools": {
+    "acpx": ["bunx", "acpx"]
+  },
+  "prompts": {
+    "dir": "~/.beflow/prompts"
+  },
+  "agents": {
+    "claude": {
+      "command": "claude",
+      "args": ["--dangerously-skip-permissions"],
+      "acpCommand": "bunx",
+      "acpArgs": ["@agentclientprotocol/claude-agent-acp"],
+      "model": "claude-opus-4-8"
+    },
+    "omp": {
+      "command": "omp",
+      "acpArgs": ["acp"]
+    }
+  },
+  "workspace": {
+    "id": "<workspace-uuid>",
+    "slug": "your-workspace"
+  },
+  "projects": {
+    "APP": {
+      "name": "My App",
+      "plane_project_id": "<project-uuid>",
+      "root": "/path/to/project",
+      "default_repo": "main_repo",
+      "limits": {
+        "inReview": 5,
+        "inProgress": 3
+      },
+      "repos": {
+        "main_repo": "/path/to/project/main_repo",
+        "website": "/path/to/project/website"
+      },
+      "module_repo_map": {
+        "GUI": "main_repo",
+        "Website": "website"
+      },
+      "defaults": {
+        "agent": "claude",
+        "runMode": "supervised"
+      }
+    }
+  }
+}

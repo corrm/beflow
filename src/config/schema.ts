@@ -1,0 +1,181 @@
+import { z } from "zod";
+
+export const runModeSchema = z.enum(["autonomous", "supervised"]);
+export const jobKindSchema = z.enum(["triage", "spec", "implement"]);
+
+export const projectDefaultsSchema = z
+    .object({
+        agent: z.string().optional(),
+        runMode: runModeSchema.optional(),
+    })
+    .optional();
+
+export const routingSchema = z
+    .object({
+        implement: z.string().optional(),
+        spec: z.string().optional(),
+        triage: z.string().optional(),
+    })
+    .optional();
+
+export const projectSchema = z.object({
+    default_repo: z.string(),
+    defaults: projectDefaultsSchema,
+    ci: z.object({ autoReworkOnRed: z.boolean().optional() }).optional(),
+    deadLetter: z.object({ maxAttempts: z.number().optional() }).optional(),
+    inputQuality: z.object({ minBodyChars: z.number().optional() }).optional(),
+    limits: z
+        .object({
+            inReview: z.number().optional(),
+            inProgress: z.number().optional(),
+            maxRunMinutes: z.number().optional(),
+        })
+        .optional(),
+    module_repo_map: z.record(z.string(), z.string()),
+    name: z.string(),
+    plane_project_id: z.string().optional(),
+    qualityGate: z.object({ commands: z.array(z.string()).optional() }).optional(),
+    repos: z.record(z.string(), z.string()),
+    review: z.object({ enabled: z.boolean().optional(), postToPr: z.boolean().optional() }).optional(),
+    root: z.string(),
+    routing: routingSchema,
+    scheduling: z.object({ activeCycleOnly: z.boolean().optional() }).optional(),
+    sla: z.object({ inReviewMinutes: z.number().optional(), needsInputMinutes: z.number().optional() }).optional(),
+    telemetry: z.object({ inComment: z.boolean().optional() }).optional(),
+});
+
+export type Project = z.infer<typeof projectSchema>;
+
+export const agentConfigSchema = z.object({
+    // Interactive CLI binary used by the `--open` direct spawn. REQUIRED.
+    command: z.string(),
+    // Extra args appended to the `--open` direct spawn (before the task).
+    args: z.array(z.string()).optional(),
+    // ACP-server binary used by acpx `--auto`/`--attend`; defaults to `command`.
+    acpCommand: z.string().optional(),
+    // Args for the ACP server; beflow passes acpx
+    // `--agent "<acpCommand ?? command> <acpArgs...>"` for --auto/--attend.
+    acpArgs: z.array(z.string()).optional(),
+    // Acpx `--model` for `--auto`/`--attend`.
+    model: z.string().optional(),
+    permissionPolicy: z.unknown().optional(),
+});
+
+export type AgentConfig = z.infer<typeof agentConfigSchema>;
+
+export const agentsMapSchema = z.record(z.string(), agentConfigSchema);
+
+export const workspaceSchema = z.object({
+    id: z.string(),
+    slug: z.string(),
+});
+
+// The single on-disk shape of config.json: tracker settings + registry
+// (workspace + projects) + the per-agent map, all in one file.
+export const fileSchema = z.object({
+    $schema: z.string().optional(),
+    _comment: z.string().optional(),
+    tracker: z.enum(["plane", "linear"]),
+    trackers: z.object({
+        linear: z
+            .object({
+                apiKeyEnv: z.string(),
+            })
+            .optional(),
+        plane: z
+            .object({
+                baseUrl: z.string(),
+                workspaceSlug: z.string(),
+                apiKeyEnv: z.string(),
+            })
+            .optional(),
+    }),
+    defaults: z.object({
+        agent: z.string(),
+        runMode: runModeSchema,
+        // Optional tracker user id; when set, beflow assigns the issue to this user
+        // As it picks it up (moves it to In Progress), for both --auto and --attend.
+        assignee: z.string().optional(),
+        // Unified dead-letter cap: how many accumulated failed attempts (across crash
+        // Resume + CI rework) before beflow quarantines the item to Needs Input.
+        // Per-project `projects.<KEY>.deadLetter` overrides this global; default 3.
+        deadLetter: z.object({ maxAttempts: z.number().optional() }).optional(),
+        // Opt-in input-quality gate. When `minBodyChars` > 0, a fresh autonomous
+        // Dispatch of a too-thin issue is parked to Needs Input instead of burning an
+        // Agent run. Per-project `projects.<KEY>.inputQuality` overrides this global.
+        inputQuality: z.object({ minBodyChars: z.number().optional() }).optional(),
+        // Inline parent-epic + attachment context into the agent task. Default on; set false to disable.
+        linkedContext: z.boolean().optional(),
+        // How beflow reacts when a human moves a card out of beflow's hands (out of
+        // The started group) while a run is live. `yield` lets the run finish but
+        // Skips writeback so the human's move stands; `abort` additionally cancels
+        // The agent mid-run. Always present after parse thanks to the default.
+        onManualMove: z.enum(["yield", "abort"]).default("yield"),
+        // Opt-in quality gate: project check command(s) run in the worktree before an
+        // Implement `done` report opens a PR / advances to In Review. On RED beflow
+        // Auto-reworks the live agent session once, then re-checks; still-red is failed.
+        // Per-project `projects.<KEY>.qualityGate` overrides this global.
+        qualityGate: z.object({ commands: z.array(z.string()).optional() }).optional(),
+        // Opt-in PR review assist. When `enabled`, watch dispatches a reviewer agent over
+        // In-Review items and posts its findings as an issue comment; `postToPr` also posts
+        // Them on the PR. Per-project `projects.<KEY>.review` overrides this global.
+        review: z.object({ enabled: z.boolean().optional(), postToPr: z.boolean().optional() }).optional(),
+        // Opt-in agent routing by jobkind. Keys are jobkind names; values are agent names
+        // From config.agents. Per-project `projects.<KEY>.routing` overrides this global.
+        routing: routingSchema,
+        // Opt-in SLA aging: minutes an item may sit in Needs Input / In Review before
+        // Beflow re-pings the escalation channel. Per-project `projects.<KEY>.sla`
+        // Overrides this global.
+        sla: z.object({ inReviewMinutes: z.number().optional(), needsInputMinutes: z.number().optional() }).optional(),
+        // Opt-in run telemetry: when `inComment`, beflow appends a compact token/cost
+        // Line to its writeback comment on the issue. Default off. Per-project
+        // `projects.<KEY>.telemetry` overrides this global.
+        telemetry: z.object({ inComment: z.boolean().optional() }).optional(),
+    }),
+    // Where `--auto` runs create their per-issue git worktrees. `~` expands to the
+    // Home dir; defaults to ~/.beflow/worktrees (outside any repo).
+    worktrees: z
+        .object({
+            dir: z.string(),
+        })
+        .optional(),
+    // When enabled, beflow reads a user `.mcp.json` cascade and injects the
+    // Translated servers as a managed `.acpxrc.json` into the agent cwd for
+    // Acpx-driven runs (`--auto`/`watch`/`--attend`). Disabled by default.
+    mcp: z.object({ enabled: z.boolean().default(false) }).optional(),
+    // Where `--auto` runs persist their per-issue run-records so an interrupted
+    // Run can resume. `~` expands to home; defaults to ~/.beflow/runs.
+    runs: z.object({ dir: z.string() }).optional(),
+    // External tool launchers. `acpx` is the command array beflow spawns to run
+    // Acpx (command + leading args); defaults to `["bunx", "acpx"]` (bun-first).
+    tools: z.object({ acpx: z.array(z.string()).optional() }).optional(),
+    // Directory of user-editable prompt templates that override the compiled-in
+    // Defaults. `~` expands to home; each `<name>.md` overrides that prompt.
+    prompts: z.object({ dir: z.string() }).optional(),
+    workspace: workspaceSchema,
+    projects: z.record(z.string(), projectSchema),
+    agents: agentsMapSchema.optional(),
+});
+
+export type ConfigFile = z.infer<typeof fileSchema>;
+
+// The Config slice consumed by tracker/run/doctor code. `agents` is always
+// Present (loaders default it to {}), so downstream may read config.agents
+// Without an undefined guard.
+export const configSchema = fileSchema
+    .omit({
+        _comment: true,
+        projects: true,
+        workspace: true,
+    })
+    .extend({ agents: agentsMapSchema });
+
+export type Config = z.infer<typeof configSchema>;
+
+// The Registry slice: workspace + projects.
+export const registrySchema = z.object({
+    projects: z.record(z.string(), projectSchema),
+    workspace: workspaceSchema,
+});
+
+export type Registry = z.infer<typeof registrySchema>;

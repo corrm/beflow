@@ -3,6 +3,8 @@
 **An AI-agent orchestration CLI that drives your issue tracker's backlog to
 shipped PRs.**
 
+![beflow demo](media/demo.gif)
+
 beflow turns work items on a project board ([Plane](https://plane.so) or
 [Linear](https://linear.app)) into agent-driven pull requests. You stay the
 captain — decide, review, merge; beflow runs the crew — investigate, spec,

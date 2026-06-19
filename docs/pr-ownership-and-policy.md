@@ -148,6 +148,11 @@ Each rule is matched in order; the first match wins. A rule with no `paths` or
 | `agent`    | `string`                                       | Match only when this agent ran the job.                      |
 | `decision` | `"allow"` \| `"require_approval"` \| `"block"` | Required. The outcome when this rule matches.                |
 
+`paths` are full-path globs matched against the changed file paths, so a rule
+for a directory needs `infra/**`, not `infra`. A rule that matches nothing simply
+does not fire — the change falls through to the next rule, and ultimately toward
+`allow` if no rule matches.
+
 #### `evaluator: "globs"` example
 
 ```json

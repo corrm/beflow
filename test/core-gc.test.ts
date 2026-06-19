@@ -345,6 +345,54 @@ describe("runGc", () => {
         expect(branchCall?.args).toEqual(["-C", "/repo/bin", "branch", "-D", "beflow/cg-blk"]);
     });
 
+    it("holds a dirty blocked worktree under --prune, reaps it under --force", async () => {
+        const specs = { "cg-blk": { dirty: true, repo: "/repo/bin" } };
+
+        const held = await runGc({
+            fs: memGcFs(["cg-blk"]).fs,
+            git: fakeGit(specs).git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([record("CG-BLK", "blocked")]),
+            worktreesDir: WORKTREES,
+        });
+        expect(held.pruned).toEqual([]);
+        expect(held.held.map((o) => o.name)).toEqual(["cg-blk"]);
+        expect(held.held[0]?.heldReason).toBe("uncommitted changes");
+
+        const forced = fakeGit(specs);
+        const plan = await runGc({
+            force: true,
+            fs: memGcFs(["cg-blk"]).fs,
+            git: forced.git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([record("CG-BLK", "blocked")]),
+            worktreesDir: WORKTREES,
+        });
+        expect(plan.pruned.map((o) => o.name)).toEqual(["cg-blk"]);
+        const removeCall = forced.calls.find((c) => c.args.includes("remove"));
+        expect(removeCall?.args).toEqual(["-C", "/repo/bin", "worktree", "remove", "/wt/cg-blk", "--force"]);
+        const branchCall = forced.calls.find((c) => c.args.includes("branch"));
+        expect(branchCall?.args).toEqual(["-C", "/repo/bin", "branch", "-D", "beflow/cg-blk"]);
+    });
+
+    it("does not delete a held dirty blocked worktree's local branch under --prune", async () => {
+        const { calls, git } = fakeGit({ "cg-blk": { dirty: true, repo: "/repo/bin" } });
+        const { fs, removed } = memGcFs(["cg-blk"]);
+        const plan = await runGc({
+            fs,
+            git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([record("CG-BLK", "blocked")]),
+            worktreesDir: WORKTREES,
+        });
+        expect(plan.pruned).toEqual([]);
+        expect(removed).toEqual([]);
+        expect(calls.some((c) => c.args.includes("remove") || c.args.includes("branch"))).toBe(false);
+    });
+
     it("report-only (no --prune) reports a blocked worktree but removes nothing", async () => {
         const { calls, git } = fakeGit({ "cg-blk": { repo: "/repo/bin" } });
         const { fs, removed } = memGcFs(["cg-blk"]);

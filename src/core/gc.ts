@@ -68,6 +68,23 @@ function parseSourceRepo(stdout: string): string | undefined {
     return undefined;
 }
 
+// Runs the dirty/unpushed cleanliness check used to decide whether a worktree is
+// safe to reap. `safe` is true only when the worktree is clean and fully pushed;
+// otherwise `heldReason` explains why it is held out of a plain `--prune`.
+async function inspectCleanliness(
+    path: string,
+    git: Exec,
+): Promise<{ dirty: boolean; unpushed: boolean; safe: boolean; heldReason?: string }> {
+    const status = await git("git", ["-C", path, "status", "--porcelain"]);
+    const dirty = status.code !== 0 || status.stdout.trim().length > 0;
+
+    const revList = await git("git", ["-C", path, "rev-list", "HEAD", "--not", "--remotes"]);
+    const unpushed = revList.code !== 0 || revList.stdout.trim().length > 0;
+
+    const heldReason = dirty ? "uncommitted changes" : unpushed ? "unpushed commits" : undefined;
+    return { dirty, safe: !dirty && !unpushed, unpushed, ...(heldReason !== undefined ? { heldReason } : {}) };
+}
+
 async function inspectOrphan(path: string, ageDays: number, git: Exec): Promise<OrphanWorktree> {
     const name = path.slice(path.lastIndexOf("/") + 1);
 
@@ -85,29 +102,14 @@ async function inspectOrphan(path: string, ageDays: number, git: Exec): Promise<
         };
     }
 
-    const status = await git("git", ["-C", path, "status", "--porcelain"]);
-    const dirty = status.code !== 0 || status.stdout.trim().length > 0;
-
-    const revList = await git("git", ["-C", path, "rev-list", "HEAD", "--not", "--remotes"]);
-    const unpushed = revList.code !== 0 || revList.stdout.trim().length > 0;
-
-    const reason = dirty ? "uncommitted changes" : unpushed ? "unpushed commits" : undefined;
-    return {
-        ageDays,
-        dirty,
-        name,
-        path,
-        repoPath,
-        safe: !dirty && !unpushed,
-        unpushed,
-        ...(reason !== undefined ? { heldReason: reason } : {}),
-    };
+    return { ageDays, name, path, repoPath, ...(await inspectCleanliness(path, git)) };
 }
 
 // A worktree whose run record is in the terminal `blocked` state: run.ts has
 // already closed the PR + deleted the remote branch, leaving only the local
-// worktree (which pins the local branch). Treated as safe-to-reap; the local
-// branch is deleted alongside the worktree.
+// worktree (which pins the local branch). It is reaped under a plain `--prune`
+// only when clean and fully pushed; a dirty/unpushed blocked worktree is held
+// (like an orphan) so a human's uncommitted edits survive a non-`--force` prune.
 async function inspectBlocked(path: string, ageDays: number, git: Exec): Promise<OrphanWorktree> {
     const name = path.slice(path.lastIndexOf("/") + 1);
     const listed = await git("git", ["-C", path, "worktree", "list", "--porcelain"]);
@@ -115,11 +117,9 @@ async function inspectBlocked(path: string, ageDays: number, git: Exec): Promise
     return {
         ageDays,
         blockedBranch: `beflow/${name}`,
-        dirty: false,
         name,
         path,
-        safe: true,
-        unpushed: false,
+        ...(await inspectCleanliness(path, git)),
         ...(repoPath !== undefined ? { repoPath } : {}),
     };
 }

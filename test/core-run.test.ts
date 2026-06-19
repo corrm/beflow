@@ -2029,6 +2029,9 @@ describe("runIssue", () => {
             expect(tracker.calls.some((c) => c.kind === "addProperty" && c.label === "failed")).toBe(true);
             expect(gitCalls.some((c) => c.includes("remove"))).toBe(false);
             expect(onlyRecord(store)?.status).toBe("failed");
+            // The PR-layer-failure park persists attempts 0: the agent succeeded,
+            // so the next dispatch must not inherit a stale attempt count.
+            expect(onlyRecord(store)?.attempts).toBe(0);
             expect(result.applied?.movedTo).toBe("Needs Input");
         });
 

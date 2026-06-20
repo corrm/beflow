@@ -76,6 +76,9 @@ function memRunsFs(records: RunRecord[]): RunStoreFs {
         store.set(`${RUNS}/${rec.key.toLowerCase()}.json`, JSON.stringify(rec));
     }
     return {
+        append: (path, data) => {
+            store.set(path, `${store.get(path) ?? ""}${data}`);
+        },
         list: (dir) => [...store.keys()].filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1)),
         read: (path) => store.get(path) ?? null,
         remove: (path) => {

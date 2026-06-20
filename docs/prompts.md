@@ -38,6 +38,31 @@ the same override cascade as the rest of the templates. For the `beflow new`
 issue-template system (the per-type Markdown frontmatter files), see
 [docs/issue-templates.md](issue-templates.md).
 
+### Decision-receipt template (`decision-receipt.md`)
+
+`decision-receipt.md` is the body of the policy-decision receipt comment beflow
+posts on a work item (when [`decisions.comment`](config.md#top-level) is not
+`false`). It is **not** part of `PromptSet` and is loaded on demand by
+`loadDecisionReceiptPrompt`, riding the same override cascade. There is no forced
+format — drop your own `decision-receipt.md` into any override location to shape
+the receipt however you like. A broken custom template (an unknown placeholder)
+is logged and swallowed, so it can never fail a run.
+
+Its placeholders, supplied by `buildReceiptContext`:
+
+| Placeholder            | Value                                                                                                                                          |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `{{decision}}`         | The decision label: `ALLOW`, `BLOCK`, or `REQUIRE APPROVAL`.                                                                                   |
+| `{{evaluator}}`        | The policy evaluator that produced the decision.                                                                                               |
+| `{{reason}}`           | The human-readable reason for the decision.                                                                                                    |
+| `{{fileCount}}`        | The number of changed files.                                                                                                                   |
+| `{{changedFilesList}}` | Pre-composed, indented list of changed files (capped at 20, `+N more` beyond); a leading newline when non-empty, `""` when there are no files. |
+| `{{prLine}}`           | Pre-composed `- PR: <url>` line with a leading newline, or `""` when there is no PR.                                                           |
+| `{{prUrl}}`            | The raw PR URL, or `""` when there is no PR.                                                                                                   |
+| `{{key}}`              | The work-item key.                                                                                                                             |
+| `{{runId}}`            | The run id the decision belongs to.                                                                                                            |
+| `{{timestamp}}`        | The decision timestamp (ISO 8601).                                                                                                             |
+
 ## Placeholders
 
 Templates use `{{name}}` placeholders (inner whitespace is allowed, e.g.
@@ -68,8 +93,8 @@ For each template, beflow resolves the first readable file in this order
 4. The compiled-in default (embedded in the binary at build time).
 
 The cascade is per-template: you can override just `implement.md` and leave the
-rest on their defaults. `issue-enrich.md` uses the same three candidate paths
-under the same directories.
+rest on their defaults. `issue-enrich.md` and `decision-receipt.md` use the same
+three candidate paths under the same directories.
 
 ## Customizing
 

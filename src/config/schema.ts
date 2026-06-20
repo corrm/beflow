@@ -198,7 +198,9 @@ export const fileSchema = z.object({
     // Append-only canonical decision log: every post-run policy decision is
     // Written here as one NDJSON event, outliving the run-record GC. `~` expands
     // To home; defaults to ~/.beflow/decisions (a sibling of the runs dir).
-    decisions: z.object({ dir: z.string() }).optional(),
+    // `comment` (default true) posts a human-readable receipt of each decision
+    // As a comment on the tracker issue; set false to opt out.
+    decisions: z.object({ dir: z.string().optional(), comment: z.boolean().optional() }).optional(),
     // External tool launchers. `acpx` is the command array beflow spawns to run
     // Acpx (command + leading args); defaults to `["bunx", "acpx"]` (bun-first).
     tools: z.object({ acpx: z.array(z.string()).optional() }).optional(),

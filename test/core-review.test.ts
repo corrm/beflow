@@ -216,6 +216,9 @@ function fakeDriver(assistantText: string): { driver: AgentDriver; seen: RunOpti
 function memRunsFs(): { fs: RunStoreFs; store: Map<string, string> } {
     const store = new Map<string, string>();
     const fs: RunStoreFs = {
+        append: (path, data) => {
+            store.set(path, `${store.get(path) ?? ""}${data}`);
+        },
         list: (dir) => [...store.keys()].filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1)),
         read: (path) => store.get(path) ?? null,
         remove: (path) => {

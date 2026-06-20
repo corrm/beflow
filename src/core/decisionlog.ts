@@ -45,6 +45,23 @@ export interface DecisionSink {
     emit(event: DecisionEvent): Promise<void>;
 }
 
+/**
+ * Fans one event out to several sinks, awaiting each in declared order. Used to
+ * pair the durable NDJSON log with a best-effort tracker receipt: order them
+ * `[local, tracker]` so the critical audit write lands first. A sub-sink's error
+ * propagates (sequential await), so put fallible-but-essential sinks first and
+ * best-effort sinks — which swallow+log their own failures — last.
+ */
+export class CompositeSink implements DecisionSink {
+    public constructor(private readonly sinks: readonly DecisionSink[]) {}
+
+    public async emit(event: DecisionEvent): Promise<void> {
+        for (const sink of this.sinks) {
+            await sink.emit(event);
+        }
+    }
+}
+
 /** Resolve the decision-log base dir: a sibling of the runs dir under `~/.beflow`. */
 export function resolveDecisionsDir(configured?: string): string {
     return configured !== undefined ? expandHome(configured) : join(homedir(), ".beflow", "decisions");
@@ -116,12 +133,15 @@ export function buildDecisionEvent(
     };
 }
 
+const DECISIONS_FILE = "decisions.ndjson";
+
 /**
  * The only concrete sink this build ships: an append-only NDJSON log, one event
  * per line, that outlives the run-record GC. Built over `RunStoreFs` so it is
- * testable in-memory and never overwrites (read-append-write keeps the file
- * monotonic). A future `ObjectStorageSink` / `SiemSink` is a new class behind the
- * same `DecisionSink` interface, not a change here.
+ * testable in-memory. Each emit is a single atomic O_APPEND write, so concurrent
+ * runs racing on the same file never interleave or clobber each other's events.
+ * A future `ObjectStorageSink` / `SiemSink` is a new class behind the same
+ * `DecisionSink` interface, not a change here.
  */
 export class LocalNdjsonSink implements DecisionSink {
     public constructor(
@@ -130,9 +150,44 @@ export class LocalNdjsonSink implements DecisionSink {
     ) {}
 
     public async emit(event: DecisionEvent): Promise<void> {
-        const path = join(this.dir, "decisions.ndjson");
-        const prior = this.fs.read(path) ?? "";
-        this.fs.write(path, `${prior}${JSON.stringify(event)}\n`);
+        this.fs.append(join(this.dir, DECISIONS_FILE), `${JSON.stringify(event)}\n`);
         return Promise.resolve();
     }
+}
+
+/**
+ * Read the durable decision log, recovering from a torn trailing line. A write
+ * interrupted mid-append leaves a partial last line; that line is skipped while
+ * every earlier valid event is preserved. Returns `[]` when the file is absent.
+ */
+export function readDecisionEvents(dir: string, fs: RunStoreFs = nodeRunStoreFs): DecisionEvent[] {
+    const raw = fs.read(join(dir, DECISIONS_FILE));
+    if (raw === null) {
+        return [];
+    }
+
+    const events: DecisionEvent[] = [];
+    for (const line of raw.split("\n")) {
+        if (line.length === 0) {
+            continue;
+        }
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(line);
+        } catch {
+            continue;
+        }
+        if (isDecisionEvent(parsed)) {
+            events.push(parsed);
+        }
+    }
+    return events;
+}
+
+function isDecisionEvent(value: unknown): value is DecisionEvent {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+    const record: Record<string, unknown> = { ...value };
+    return typeof record.decisionId === "string" && typeof record.schemaVersion === "number";
 }

@@ -1,14 +1,26 @@
-import { describe, expect, it } from "bun:test";
-import { homedir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { buildDecisionEvent, LocalNdjsonSink, resolveDecisionsDir } from "../src/core/decisionlog.ts";
+import { spawn } from "bun";
+
+import {
+    buildDecisionEvent,
+    LocalNdjsonSink,
+    readDecisionEvents,
+    resolveDecisionsDir,
+} from "../src/core/decisionlog.ts";
 import type { NewDecisionEvent } from "../src/core/decisionlog.ts";
+import { nodeRunStoreFs } from "../src/core/runstore.ts";
 import type { RunStoreFs } from "../src/core/runstore.ts";
 
 function memFs(): { fs: RunStoreFs; store: Map<string, string> } {
     const store = new Map<string, string>();
     const fs: RunStoreFs = {
+        append: (path, data) => {
+            store.set(path, `${store.get(path) ?? ""}${data}`);
+        },
         list: (dir) => [...store.keys()].filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1)),
         read: (path) => store.get(path) ?? null,
         remove: (path) => {
@@ -19,6 +31,39 @@ function memFs(): { fs: RunStoreFs; store: Map<string, string> } {
         },
     };
     return { fs, store };
+}
+
+interface FsCall {
+    method: keyof RunStoreFs;
+    args: unknown[];
+}
+
+function spyFs(): { fs: RunStoreFs; calls: FsCall[] } {
+    const calls: FsCall[] = [];
+    const store = new Map<string, string>();
+    const fs: RunStoreFs = {
+        append: (path, data) => {
+            calls.push({ args: [path, data], method: "append" });
+            store.set(path, `${store.get(path) ?? ""}${data}`);
+        },
+        list: (dir) => {
+            calls.push({ args: [dir], method: "list" });
+            return [...store.keys()].filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1));
+        },
+        read: (path) => {
+            calls.push({ args: [path], method: "read" });
+            return store.get(path) ?? null;
+        },
+        remove: (path) => {
+            calls.push({ args: [path], method: "remove" });
+            store.delete(path);
+        },
+        write: (path, data) => {
+            calls.push({ args: [path, data], method: "write" });
+            store.set(path, data);
+        },
+    };
+    return { calls, fs };
 }
 
 const fixedClock = (): string => "2026-06-20T00:00:00.000Z";
@@ -116,5 +161,107 @@ describe("LocalNdjsonSink", () => {
         }
         // All three lines persist in emit order — the prior content is never overwritten.
         expect(lines(store, "/decisions")).toEqual(emitted);
+    });
+
+    it("emit is a single atomic append — never read-then-write", async () => {
+        const { calls, fs } = spyFs();
+        const sink = new LocalNdjsonSink("/decisions", fs);
+        const event = buildDecisionEvent(newEvent(), fixedClock, fixedId);
+        await sink.emit(event);
+        expect(calls).toEqual([
+            { args: [join("/decisions", "decisions.ndjson"), `${JSON.stringify(event)}\n`], method: "append" },
+        ]);
+        expect(calls.some((c) => c.method === "write")).toBe(false);
+        expect(calls.some((c) => c.method === "read")).toBe(false);
+    });
+});
+
+describe("LocalNdjsonSink (real fs, concurrent writers)", () => {
+    let dir: string;
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "beflow-decisions-"));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { force: true, recursive: true });
+    });
+
+    it("loses no events under concurrent emits across two sinks on the same file", async () => {
+        const sinkA = new LocalNdjsonSink(dir, nodeRunStoreFs);
+        const sinkB = new LocalNdjsonSink(dir, nodeRunStoreFs);
+        const count = 100;
+        const events = Array.from({ length: count }, (_, i) =>
+            buildDecisionEvent(newEvent({ key: `CG-${String(i)}` }), fixedClock, () => `d-${String(i)}`),
+        );
+        await Promise.all(
+            events.map(async (event, i) => {
+                const sink = i % 2 === 0 ? sinkA : sinkB;
+                await sink.emit(event);
+            }),
+        );
+        const read = readDecisionEvents(dir, nodeRunStoreFs);
+        expect(read).toHaveLength(count);
+        expect(new Set(read.map((e) => e.decisionId))).toEqual(new Set(events.map((e) => e.decisionId)));
+    });
+
+    it("loses no lines when two OS processes O_APPEND the same file concurrently", async () => {
+        const target = join(dir, "decisions.ndjson");
+        const perProc = 200;
+        const appender = join(dir, "appender.ts");
+        writeFileSync(
+            appender,
+            [
+                'import { appendFileSync } from "node:fs";',
+                "const [target, prefix, count] = process.argv.slice(2);",
+                "for (let i = 0; i < Number(count); i++) {",
+                '    appendFileSync(target, `${prefix}-${String(i)}\\n`, "utf8");',
+                "}",
+                "",
+            ].join("\n"),
+            "utf8",
+        );
+
+        const procA = spawn(["bun", appender, target, "procA", String(perProc)]);
+        const procB = spawn(["bun", appender, target, "procB", String(perProc)]);
+        const [exitA, exitB] = await Promise.all([procA.exited, procB.exited]);
+        expect(exitA).toBe(0);
+        expect(exitB).toBe(0);
+
+        const written = readFileSync(target, "utf8")
+            .split("\n")
+            .filter((line) => line.length > 0);
+        expect(written).toHaveLength(perProc * 2);
+        const fromA = written.filter((line) => line.startsWith("procA-"));
+        const fromB = written.filter((line) => line.startsWith("procB-"));
+        expect(new Set(fromA)).toEqual(new Set(Array.from({ length: perProc }, (_, i) => `procA-${String(i)}`)));
+        expect(new Set(fromB)).toEqual(new Set(Array.from({ length: perProc }, (_, i) => `procB-${String(i)}`)));
+    });
+});
+
+describe("readDecisionEvents", () => {
+    let dir: string;
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "beflow-decisions-"));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { force: true, recursive: true });
+    });
+
+    it("returns [] when the log file is absent", () => {
+        expect(readDecisionEvents(dir, nodeRunStoreFs)).toEqual([]);
+    });
+
+    it("recovers all valid events and silently drops a torn trailing line", () => {
+        const valid = [
+            buildDecisionEvent(newEvent({ key: "CG-1" }), fixedClock, () => "d-1"),
+            buildDecisionEvent(newEvent({ key: "CG-2" }), fixedClock, () => "d-2"),
+        ];
+        const path = join(dir, "decisions.ndjson");
+        writeFileSync(path, valid.map((e) => `${JSON.stringify(e)}\n`).join(""), "utf8");
+        appendFileSync(path, JSON.stringify(newEvent({ key: "CG-3" })).slice(0, 30), "utf8");
+        expect(readDecisionEvents(dir, nodeRunStoreFs)).toEqual(valid);
     });
 });

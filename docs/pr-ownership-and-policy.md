@@ -145,8 +145,14 @@ issue and are absent today.
 
 The log is **append-only**: beflow never rewrites or truncates it. It is written
 through a `DecisionSink` adapter — a stable interface with swappable
-implementations. The only implementation today is the local NDJSON sink;
-object-storage or SIEM sinks are future drop-ins behind the same interface and the
+implementations. The local NDJSON sink is paired (via a `CompositeSink`) with a
+best-effort tracker **receipt** sink that posts a human-readable summary of each
+decision as a comment on the issue. The audit write always lands first; a tracker
+outage logs and is swallowed, so it can never fail the run or lose the NDJSON
+event. Set `decisions.comment` to `false` to opt out of the receipt comment. The
+receipt body is not a forced format — it is a fully overridable
+[`decision-receipt.md`](prompts.md#decision-receipt-template-decision-receiptmd)
+prompt template. Object-storage or SIEM sinks are future drop-ins behind the same interface and the
 same event shape, not a change to the record.
 
 ---

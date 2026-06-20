@@ -482,6 +482,7 @@ async function cmdRun(
             notify,
             preResolved,
             prompts,
+            promptResolveDeps: defaultPromptResolveDeps(ctx.dir, config.prompts?.dir),
             registry,
             tracker,
             ...(mcpServers.length > 0 ? { mcpServers } : {}),

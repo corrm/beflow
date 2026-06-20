@@ -1,13 +1,24 @@
-import { describe, expect, it } from "bun:test";
-import { homedir } from "node:os";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { deleteRecord, listRecords, loadRecord, resolveRunsDir, saveRecord } from "../src/core/runstore.ts";
+import {
+    deleteRecord,
+    listRecords,
+    loadRecord,
+    nodeRunStoreFs,
+    resolveRunsDir,
+    saveRecord,
+} from "../src/core/runstore.ts";
 import type { RunRecord, RunStoreFs } from "../src/core/runstore.ts";
 
 function memFs(): { fs: RunStoreFs; store: Map<string, string> } {
     const store = new Map<string, string>();
     const fs: RunStoreFs = {
+        append: (path, data) => {
+            store.set(path, `${store.get(path) ?? ""}${data}`);
+        },
         list: (dir) => [...store.keys()].filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1)),
         read: (path) => store.get(path) ?? null,
         remove: (path) => {
@@ -173,6 +184,32 @@ describe("listRecords", () => {
         saveRecord("/runs", makeRecord({ key: "CG-1" }), fs);
         fs.write(join("/runs", "invalid.json"), JSON.stringify({ key: "CG-9" }));
         expect(listRecords("/runs", fs).map((r) => r.key)).toEqual(["CG-1"]);
+    });
+});
+
+describe("nodeRunStoreFs.append (real fs)", () => {
+    let dir: string;
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "beflow-runstore-"));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { force: true, recursive: true });
+    });
+
+    it("appends without truncating: successive appends concatenate in order", () => {
+        const path = join(dir, "log.ndjson");
+        nodeRunStoreFs.append(path, "first\n");
+        nodeRunStoreFs.append(path, "second\n");
+        expect(readFileSync(path, "utf8")).toBe("first\nsecond\n");
+    });
+
+    it("append after write keeps the written content, then adds to it", () => {
+        const path = join(dir, "log.ndjson");
+        nodeRunStoreFs.write(path, "base\n");
+        nodeRunStoreFs.append(path, "more\n");
+        expect(readFileSync(path, "utf8")).toBe("base\nmore\n");
     });
 });
 

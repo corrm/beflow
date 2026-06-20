@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -60,11 +60,16 @@ function recordPath(runsDir: string, key: string): string {
 export interface RunStoreFs {
     read(path: string): string | null;
     write(path: string, data: string): void;
+    append(path: string, data: string): void;
     remove(path: string): void;
     list(dir: string): string[];
 }
 
 export const nodeRunStoreFs: RunStoreFs = {
+    append(path, data) {
+        mkdirSync(dirname(path), { recursive: true });
+        appendFileSync(path, data, "utf8");
+    },
     list(dir) {
         try {
             return readdirSync(dir);

@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import type { Issue, JobKind } from "../model/types.ts";
 import continuationDefault from "../prompts/defaults/continuation.md" with { type: "text" };
+import decisionReceiptDefault from "../prompts/defaults/decision-receipt.md" with { type: "text" };
 import implementDefault from "../prompts/defaults/implement.md" with { type: "text" };
 import issueEnrichDefault from "../prompts/defaults/issue-enrich.md" with { type: "text" };
 import reportDefault from "../prompts/defaults/report.md" with { type: "text" };
@@ -92,6 +93,18 @@ export function loadEnrichPrompt(deps: PromptResolveDeps): string {
         }
     }
     return issueEnrichDefault;
+}
+
+// The decision-receipt comment template. Like loadEnrichPrompt it rides the same
+// override cascade but is on-demand (only the tracker receipt sink needs it), so
+// it stays out of PromptSet/PROMPT_NAMES.
+export function loadDecisionReceiptPrompt(deps: PromptResolveDeps): string {
+    for (const path of promptCandidates("decision-receipt", deps)) {
+        if (deps.exists(path)) {
+            return deps.read(path);
+        }
+    }
+    return decisionReceiptDefault;
 }
 
 export function loadPromptSet(deps: PromptResolveDeps): PromptSet {

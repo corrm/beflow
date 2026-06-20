@@ -55,6 +55,26 @@ describe("evaluatePolicy globs", () => {
         const res = await evaluatePolicy(contextWith({ changedFiles: ["infra/main.tf"] }), policy, noopCmdExec, "/wt");
         expect(res.decision).toBe("block");
         expect(res.reason).toContain("infra/**");
+        expect(res.matchedRules).toEqual([{ decision: "block", paths: ["infra/**"] }]);
+    });
+
+    it("populates structured matchedRules for every fired rule (not just the winner)", async () => {
+        const policy = globsPolicy([
+            { decision: "allow", paths: ["src/**"] },
+            { agent: "claude", decision: "block", paths: ["src/**"] },
+        ]);
+        const res = await evaluatePolicy(contextWith({ changedFiles: ["src/a.ts"] }), policy, noopCmdExec, "/wt");
+        expect(res.decision).toBe("block");
+        expect(res.matchedRules).toEqual([
+            { decision: "allow", paths: ["src/**"] },
+            { agent: "claude", decision: "block", paths: ["src/**"] },
+        ]);
+    });
+
+    it("leaves matchedRules empty when no rule matches", async () => {
+        const policy = globsPolicy([{ decision: "block", paths: ["infra/**"] }]);
+        const res = await evaluatePolicy(contextWith({ changedFiles: ["src/a.ts"] }), policy, noopCmdExec, "/wt");
+        expect(res.matchedRules).toEqual([]);
     });
 
     it("only fires an agent-scoped rule for the matching agent", async () => {
@@ -114,7 +134,7 @@ describe("evaluatePolicy command", () => {
         const res = await evaluatePolicy(context, commandPolicy(["policy.sh"]), exec, "/wt");
         expect(seenArgv).toEqual(["policy.sh"]);
         expect(JSON.parse(seenStdin)).toEqual(context);
-        expect(res).toEqual({ decision: "require_approval", reason: "needs review" });
+        expect(res).toEqual({ decision: "require_approval", matchedRules: [], reason: "needs review" });
     });
 
     it("throws on garbage (non-JSON) output", async () => {

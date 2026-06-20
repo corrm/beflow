@@ -15,9 +15,22 @@ export interface PolicyContext {
     issueKey: string;
 }
 
+/** A single rule that fired during evaluation, in structured form. */
+export interface MatchedRule {
+    decision: PolicyDecision;
+    paths?: string[];
+    agent?: string;
+}
+
 export interface PolicyResult {
     decision: PolicyDecision;
     reason: string;
+    /**
+     * The rule(s) that fired, structured. Empty when nothing matched (or the
+     * evaluator is `off`/`command`, which do not expose individual rules). This is
+     * the machine-readable companion to the flattened `reason` string.
+     */
+    matchedRules: MatchedRule[];
 }
 
 /**
@@ -73,14 +86,22 @@ function ruleMatches(rule: { paths?: string[]; agent?: string }, context: Policy
 function evaluateRules(rules: PolicyRule[], context: PolicyContext): PolicyResult {
     const matched = rules.filter((rule) => ruleMatches(rule, context));
     if (matched.length === 0) {
-        return { decision: "allow", reason: "no policy rule matched" };
+        return { decision: "allow", matchedRules: [], reason: "no policy rule matched" };
     }
     const winner = matched.reduce((best, rule) =>
         DECISION_RANK[rule.decision] < DECISION_RANK[best.decision] ? rule : best,
     );
     const scope = winner.agent !== undefined ? ` agent=${winner.agent}` : "";
     const paths = winner.paths !== undefined ? ` paths=${winner.paths.join(",")}` : "";
-    return { decision: winner.decision, reason: `rule decision=${winner.decision}${scope}${paths}` };
+    return {
+        decision: winner.decision,
+        matchedRules: matched.map((rule) => ({
+            decision: rule.decision,
+            ...(rule.paths !== undefined ? { paths: rule.paths } : {}),
+            ...(rule.agent !== undefined ? { agent: rule.agent } : {}),
+        })),
+        reason: `rule decision=${winner.decision}${scope}${paths}`,
+    };
 }
 
 function evaluateGlobs(context: PolicyContext, policy: ResolvedPolicy): PolicyResult {
@@ -122,7 +143,7 @@ async function evaluateAgentowners(
     const path = isAbsolute(configured) ? configured : resolve(cwd, configured);
     const text = await reader(path);
     if (text === undefined) {
-        return { decision: "allow", reason: `no AGENTOWNERS file at ${path}` };
+        return { decision: "allow", matchedRules: [], reason: `no AGENTOWNERS file at ${path}` };
     }
     return evaluateRules(parseAgentowners(text), context);
 }
@@ -156,7 +177,7 @@ async function evaluateCommand(
     if (!isPolicyDecision(decision)) {
         throw new Error(`beflow: policy command returned an invalid decision: ${JSON.stringify(decision)}`);
     }
-    return { decision, reason: typeof reason === "string" ? reason : "" };
+    return { decision, matchedRules: [], reason: typeof reason === "string" ? reason : "" };
 }
 
 /**
@@ -175,7 +196,7 @@ export async function evaluatePolicy(
 ): Promise<PolicyResult> {
     switch (policy.evaluator) {
         case "off":
-            return { decision: "allow", reason: "policy disabled" };
+            return { decision: "allow", matchedRules: [], reason: "policy disabled" };
         case "globs":
             return evaluateGlobs(context, policy);
         case "agentowners":

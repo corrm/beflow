@@ -68,7 +68,11 @@ export const projectSchema = z.object({
     policy: policySchema,
     pr: prSchema,
     qualityGate: z
-        .object({ commands: z.array(z.string()).optional(), maxRework: z.number().int().min(0).optional() })
+        .object({
+            commands: z.array(z.string()).optional(),
+            maxRework: z.number().int().min(0).optional(),
+            baselineTestGlobs: z.array(z.string()).optional(),
+        })
         .optional(),
     repos: z.record(z.string(), z.string()),
     review: z.object({ enabled: z.boolean().optional(), postToPr: z.boolean().optional() }).optional(),
@@ -156,7 +160,11 @@ export const fileSchema = z.object({
     // Disables auto-rework), re-checking after each; still-red is failed.
     // Per-project `projects.<KEY>.qualityGate` overrides this global.
     qualityGate: z
-        .object({ commands: z.array(z.string()).optional(), maxRework: z.number().int().min(0).optional() })
+        .object({
+            commands: z.array(z.string()).optional(),
+            maxRework: z.number().int().min(0).optional(),
+            baselineTestGlobs: z.array(z.string()).optional(),
+        })
         .optional(),
     // Opt-in PR review assist. When `enabled`, watch dispatches a reviewer agent over
     // In-Review items and posts its findings as an issue comment; `postToPr` also posts
@@ -187,6 +195,10 @@ export const fileSchema = z.object({
     // Where `--auto` runs persist their per-issue run-records so an interrupted
     // Run can resume. `~` expands to home; defaults to ~/.beflow/runs.
     runs: z.object({ dir: z.string() }).optional(),
+    // Append-only canonical decision log: every post-run policy decision is
+    // Written here as one NDJSON event, outliving the run-record GC. `~` expands
+    // To home; defaults to ~/.beflow/decisions (a sibling of the runs dir).
+    decisions: z.object({ dir: z.string() }).optional(),
     // External tool launchers. `acpx` is the command array beflow spawns to run
     // Acpx (command + leading args); defaults to `["bunx", "acpx"]` (bun-first).
     tools: z.object({ acpx: z.array(z.string()).optional() }).optional(),

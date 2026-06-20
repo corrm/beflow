@@ -7,6 +7,7 @@ import type { AgentDriver, AgentRunResult, RunOptions } from "../src/agent/drive
 import type { Usage } from "../src/agent/events.ts";
 import type { Report } from "../src/agent/report.ts";
 import type { Config, Registry } from "../src/config/schema.ts";
+import type { DecisionEvent, DecisionSink } from "../src/core/decisionlog.ts";
 import type { McpFs, McpServer } from "../src/core/mcp.ts";
 import type { NotifyEvent } from "../src/core/notify.ts";
 import { loadPromptSet } from "../src/core/prompts.ts";
@@ -280,7 +281,9 @@ class FlipReadTracker extends FakeTracker {
 }
 
 function onlyRecord(store: Map<string, string>): RunRecord | null {
-    const values = [...store.values()];
+    // Run records are <key>.json; the decision log is a sibling .ndjson, so it is
+    // Filtered out here — this helper asserts on the single run record only.
+    const values = [...store.entries()].filter(([path]) => path.endsWith(".json")).map(([, value]) => value);
     return values.length === 1 ? runRecordSchema.parse(JSON.parse(values[0]!)) : null;
 }
 
@@ -309,6 +312,16 @@ function memMcpFs(): { fs: McpFs; store: Map<string, string> } {
 }
 
 const mcpServers: McpServer[] = [{ args: [], command: "bunx", env: [], name: "codegraph" }];
+
+function capturingSink(): { sink: DecisionSink; events: DecisionEvent[] } {
+    const events: DecisionEvent[] = [];
+    const sink: DecisionSink = {
+        emit: async (event) => {
+            events.push(event);
+        },
+    };
+    return { events, sink };
+}
 
 describe("resolveRun", () => {
     it("throws on an unknown project key", async () => {
@@ -2236,6 +2249,375 @@ describe("runIssue", () => {
             expect(result.applied).toEqual({ movedTo: "In Review" });
             expect(tracker.calls.some((c) => c.kind === "linkPR" && c.url === "http://agent/pr/1")).toBe(true);
             expect(onlyRecord(store)?.prUrl).toBe("http://agent/pr/1");
+        });
+
+        describe("decision log", () => {
+            it("writes an allow decision event with structured matchedRules", async () => {
+                const tracker = new FakeTracker(implementIssue());
+                const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+                const { git } = fakeGit();
+                const { exec } = fakePrExec({ changedFiles: ["src/app.ts"] });
+                const { sink, events } = capturingSink();
+                await runIssue(
+                    "CG-42",
+                    {},
+                    deps({
+                        decisionSink: sink,
+                        driver,
+                        git,
+                        prExec: exec,
+                        registry: beflowRegistry({
+                            evaluator: "globs",
+                            rules: [{ decision: "allow", paths: ["src/**"] }],
+                        }),
+                        tracker,
+                    }),
+                );
+
+                expect(events).toHaveLength(1);
+                const event = events[0]!;
+                expect(event.decision).toBe("allow");
+                expect(event.evaluator).toBe("globs");
+                expect(event.key).toBe("CG-42");
+                expect(event.prUrl).toBe("https://gh/pr/99");
+                expect(event.changedFiles).toEqual(["src/app.ts"]);
+                expect(event.matchedRules).toEqual([{ decision: "allow", paths: ["src/**"] }]);
+                expect(event.changedFilesHash).toMatch(/^[0-9a-f]{64}$/);
+                expect(event.decisionInputHash).toMatch(/^[0-9a-f]{64}$/);
+            });
+
+            it("writes a require_approval decision event", async () => {
+                const tracker = new FakeTracker(implementIssue());
+                const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+                const { git } = fakeGit();
+                const { exec } = fakePrExec();
+                const { sink, events } = capturingSink();
+                await runIssue(
+                    "CG-42",
+                    {},
+                    deps({
+                        decisionSink: sink,
+                        driver,
+                        git,
+                        prExec: exec,
+                        registry: beflowRegistry({
+                            evaluator: "globs",
+                            rules: [{ decision: "require_approval", paths: ["src/**"] }],
+                        }),
+                        tracker,
+                    }),
+                );
+
+                expect(events).toHaveLength(1);
+                expect(events[0]!.decision).toBe("require_approval");
+                expect(events[0]!.matchedRules).toEqual([{ decision: "require_approval", paths: ["src/**"] }]);
+            });
+
+            it("writes a block decision event", async () => {
+                const tracker = new FakeTracker(implementIssue());
+                const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+                const { git } = fakeGit();
+                const { exec } = fakePrExec({ changedFiles: ["infra/secrets.tf"] });
+                const { sink, events } = capturingSink();
+                await runIssue(
+                    "CG-42",
+                    {},
+                    deps({
+                        decisionSink: sink,
+                        driver,
+                        git,
+                        prExec: exec,
+                        registry: beflowRegistry({
+                            evaluator: "globs",
+                            rules: [{ decision: "block", paths: ["infra/**"] }],
+                        }),
+                        tracker,
+                    }),
+                );
+
+                expect(events).toHaveLength(1);
+                expect(events[0]!.decision).toBe("block");
+                expect(events[0]!.matchedRules).toEqual([{ decision: "block", paths: ["infra/**"] }]);
+            });
+
+            it("the allow decision event SURVIVES the run-record GC (written before deleteRecord)", async () => {
+                // The default LocalNdjsonSink writes to a SIBLING dir of the runs dir; the
+                // Run record is the only .json. After a clean allow the record may be GC'd,
+                // But the decision log line persists — the core hole this issue closes.
+                const tracker = new FakeTracker(implementIssue());
+                const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+                const { git } = fakeGit();
+                const { exec } = fakePrExec({ changedFiles: ["src/app.ts"] });
+                const { fs, store } = memRunsFs();
+                await runIssue(
+                    "CG-42",
+                    {},
+                    deps({
+                        config: { ...config, decisions: { dir: "/decisions" } },
+                        driver,
+                        git,
+                        prExec: exec,
+                        registry: beflowRegistry({ evaluator: "off" }),
+                        runsFs: fs,
+                        tracker,
+                    }),
+                );
+
+                // The decision NDJSON line is present regardless of the run record's fate.
+                const ndjson = store.get(join("/decisions", "decisions.ndjson")) ?? "";
+                const written = ndjson
+                    .split("\n")
+                    .filter((line) => line.length > 0)
+                    .map((line): unknown => JSON.parse(line));
+                expect(written).toHaveLength(1);
+                expect(written[0]).toMatchObject({ decision: "allow", key: "CG-42" });
+            });
+
+            it("appends across runs (append-only, not overwrite)", async () => {
+                const { fs, store } = memRunsFs();
+                const cfg: Config = { ...config, decisions: { dir: "/decisions" } };
+                const reg = beflowRegistry({ evaluator: "off" });
+                for (const summary of ["first", "second"]) {
+                    const tracker = new FakeTracker(implementIssue());
+                    const { driver } = fakeDriver({ status: "done", summary });
+                    const { git } = fakeGit();
+                    const { exec } = fakePrExec({ changedFiles: ["src/app.ts"] });
+                    await runIssue(
+                        "CG-42",
+                        {},
+                        deps({ config: cfg, driver, git, prExec: exec, registry: reg, runsFs: fs, tracker }),
+                    );
+                }
+
+                const ndjson = store.get(join("/decisions", "decisions.ndjson")) ?? "";
+                const written = ndjson.split("\n").filter((line) => line.length > 0);
+                expect(written).toHaveLength(2);
+            });
+        });
+
+        describe("quality-gate baseline pinning", () => {
+            // Beflow-owned + a gate + baselineTestGlobs: the gate must run against the
+            // Target branch's test files, not the worktree's (possibly weakened) ones.
+            function pinnedRegistry(): Registry {
+                const reg = beflowRegistry({ evaluator: "off" });
+                return {
+                    ...reg,
+                    projects: {
+                        ...reg.projects,
+                        CG: {
+                            ...reg.projects.CG!,
+                            qualityGate: { baselineTestGlobs: ["**/*.test.ts"], commands: ["bun test"] },
+                        },
+                    },
+                };
+            }
+
+            it("a weakened test cannot self-grade green: the gate runs against the pinned baseline", async () => {
+                const tracker = new FakeTracker(implementIssue());
+                const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+                const { git } = fakeGit();
+                // The run changed a test file. The baseline (pinned) tests FAIL — the
+                // Agent's own weakened tree would have passed, but the gate never sees it.
+                const checkouts: string[][] = [];
+                const exec: Exec = async (cmd, args): Promise<ExecResult> => {
+                    if (cmd === "git" && args.includes("rev-list")) {
+                        return { code: 0, stderr: "", stdout: "1\n" };
+                    }
+                    if (cmd === "git" && args.includes("diff")) {
+                        return { code: 0, stderr: "", stdout: "src/app.ts\nsrc/app.test.ts\n" };
+                    }
+                    if (cmd === "git" && args.includes("cat-file")) {
+                        // Modified test: present in both base and HEAD.
+                        return { code: 0, stderr: "", stdout: "" };
+                    }
+                    if (cmd === "git" && args.includes("checkout")) {
+                        checkouts.push(args);
+                        return { code: 0, stderr: "", stdout: "" };
+                    }
+                    if (cmd === "gh" && args[0] === "pr" && args[1] === "create") {
+                        return { code: 0, stderr: "", stdout: "https://gh/pr/99\n" };
+                    }
+                    return { code: 0, stderr: "", stdout: "" };
+                };
+                // The pinned-baseline gate stays RED through the single rework → failed.
+                const gate: GateExec = async () => ({ exitCode: 1, output: "FAIL: baseline test broke" });
+                const { fs, store } = memRunsFs();
+                const result = await runIssue(
+                    "CG-42",
+                    {},
+                    deps({
+                        driver,
+                        gateExec: gate,
+                        git,
+                        prExec: exec,
+                        registry: pinnedRegistry(),
+                        runsFs: fs,
+                        tracker,
+                    }),
+                );
+
+                // Only the changed test file is pinned (checked out from base), not src/app.ts.
+                const pinned = checkouts.find((c) => c.includes("main"));
+                expect(pinned).toBeDefined();
+                expect(pinned).toContain("src/app.test.ts");
+                expect(pinned).not.toContain("src/app.ts");
+                // The worktree's own files are restored afterward (checkout HEAD).
+                expect(checkouts.some((c) => c.includes("HEAD") && c.includes("src/app.test.ts"))).toBe(true);
+                // Self-grading is impossible: the baseline gate is red → parked failed.
+                expect(result.applied?.movedTo).toBe("Needs Input");
+                expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "In Review")).toBe(false);
+                expect(onlyRecord(store)?.status).toBe("failed");
+            });
+
+            it("a DELETED test cannot self-grade green: baseline is restored and the gate goes red", async () => {
+                const tracker = new FakeTracker(implementIssue());
+                const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+                const { git } = fakeGit();
+                // The agent DELETED src/app.test.ts (present in base, absent in HEAD) so
+                // its own tree would pass with no test. The gate must pin the base copy.
+                const checkouts: string[][] = [];
+                const removes: string[][] = [];
+                const exec: Exec = async (cmd, args): Promise<ExecResult> => {
+                    if (cmd === "git" && args.includes("rev-list")) {
+                        return { code: 0, stderr: "", stdout: "1\n" };
+                    }
+                    if (cmd === "git" && args.includes("diff")) {
+                        return { code: 0, stderr: "", stdout: "src/app.test.ts\n" };
+                    }
+                    if (cmd === "git" && args.includes("cat-file")) {
+                        const spec = args[args.length - 1] ?? "";
+                        // Present in base, absent in HEAD (the agent deleted it).
+                        return spec.startsWith("HEAD:")
+                            ? { code: 1, stderr: "not found", stdout: "" }
+                            : { code: 0, stderr: "", stdout: "" };
+                    }
+                    if (cmd === "git" && args.includes("checkout")) {
+                        checkouts.push(args);
+                        return { code: 0, stderr: "", stdout: "" };
+                    }
+                    if (cmd === "git" && args.includes("rm")) {
+                        removes.push(args);
+                        return { code: 0, stderr: "", stdout: "" };
+                    }
+                    if (cmd === "gh" && args[0] === "pr" && args[1] === "create") {
+                        return { code: 0, stderr: "", stdout: "https://gh/pr/99\n" };
+                    }
+                    return { code: 0, stderr: "", stdout: "" };
+                };
+                // The pinned baseline test FAILS (the implementation no longer satisfies it).
+                const gate: GateExec = async () => ({ exitCode: 1, output: "FAIL: deleted test restored" });
+                const { fs, store } = memRunsFs();
+                const result = await runIssue(
+                    "CG-42",
+                    {},
+                    deps({
+                        driver,
+                        gateExec: gate,
+                        git,
+                        prExec: exec,
+                        registry: pinnedRegistry(),
+                        runsFs: fs,
+                        tracker,
+                    }),
+                );
+
+                // The base copy is laid down so the gate cannot grade against "no test".
+                expect(checkouts.some((c) => c.includes("main") && c.includes("src/app.test.ts"))).toBe(true);
+                // Restore matches HEAD by REMOVING the file again — never `checkout HEAD`
+                // (which would throw on an absent path and fail the gate open).
+                expect(checkouts.some((c) => c.includes("HEAD"))).toBe(false);
+                expect(removes.some((c) => c.includes("src/app.test.ts"))).toBe(true);
+                // Self-grading is impossible: the baseline gate is red → parked failed.
+                expect(result.applied?.movedTo).toBe("Needs Input");
+                expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "In Review")).toBe(false);
+                expect(onlyRecord(store)?.status).toBe("failed");
+            });
+
+            it("an ADDED test does NOT fail the gate open: it is excluded from pinning", async () => {
+                const tracker = new FakeTracker(implementIssue());
+                const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+                const { git } = fakeGit();
+                // The run ADDED src/added.test.ts (absent in base) and modified src/app.test.ts.
+                const checkouts: string[][] = [];
+                const exec: Exec = async (cmd, args): Promise<ExecResult> => {
+                    if (cmd === "git" && args.includes("rev-list")) {
+                        return { code: 0, stderr: "", stdout: "1\n" };
+                    }
+                    if (cmd === "git" && args.includes("diff")) {
+                        return { code: 0, stderr: "", stdout: "src/added.test.ts\nsrc/app.test.ts\n" };
+                    }
+                    if (cmd === "git" && args.includes("cat-file")) {
+                        const spec = args[args.length - 1] ?? "";
+                        // src/added.test.ts is absent in base; everything else is present.
+                        return spec === "main:src/added.test.ts"
+                            ? { code: 1, stderr: "not found", stdout: "" }
+                            : { code: 0, stderr: "", stdout: "" };
+                    }
+                    if (cmd === "git" && args.includes("checkout")) {
+                        checkouts.push(args);
+                        return { code: 0, stderr: "", stdout: "" };
+                    }
+                    if (cmd === "gh" && args[0] === "pr" && args[1] === "create") {
+                        return { code: 0, stderr: "", stdout: "https://gh/pr/99\n" };
+                    }
+                    return { code: 0, stderr: "", stdout: "" };
+                };
+                // The gate runs (it is NOT failed open) and the baseline passes.
+                const gate: GateExec = async () => ({ exitCode: 0, output: "ok" });
+                const result = await runIssue(
+                    "CG-42",
+                    {},
+                    deps({ driver, gateExec: gate, git, prExec: exec, registry: pinnedRegistry(), tracker }),
+                );
+
+                // Only the pre-existing test is pinned; the added test never hits `checkout base`.
+                const pinned = checkouts.find((c) => c.includes("main"));
+                expect(pinned).toBeDefined();
+                expect(pinned).toContain("src/app.test.ts");
+                expect(pinned).not.toContain("src/added.test.ts");
+                // The gate ran and passed → advanced to In Review (not failed open, not red).
+                expect(result.applied).toEqual({ movedTo: "In Review" });
+            });
+
+            it("no baseline globs: the gate runs in the worktree without any pinning checkout", async () => {
+                const tracker = new FakeTracker(implementIssue());
+                const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+                const { git } = fakeGit();
+                const checkouts: string[][] = [];
+                const exec: Exec = async (cmd, args): Promise<ExecResult> => {
+                    if (cmd === "git" && args.includes("rev-list")) {
+                        return { code: 0, stderr: "", stdout: "1\n" };
+                    }
+                    if (cmd === "git" && args.includes("diff")) {
+                        return { code: 0, stderr: "", stdout: "src/app.test.ts\n" };
+                    }
+                    if (cmd === "git" && args.includes("checkout")) {
+                        checkouts.push(args);
+                        return { code: 0, stderr: "", stdout: "" };
+                    }
+                    if (cmd === "gh" && args[0] === "pr" && args[1] === "create") {
+                        return { code: 0, stderr: "", stdout: "https://gh/pr/99\n" };
+                    }
+                    return { code: 0, stderr: "", stdout: "" };
+                };
+                const gate: GateExec = async () => ({ exitCode: 0, output: "ok" });
+                const reg = beflowRegistry({ evaluator: "off" });
+                const gated: Registry = {
+                    ...reg,
+                    projects: {
+                        ...reg.projects,
+                        CG: { ...reg.projects.CG!, qualityGate: { commands: ["bun test"] } },
+                    },
+                };
+                const result = await runIssue(
+                    "CG-42",
+                    {},
+                    deps({ driver, gateExec: gate, git, prExec: exec, registry: gated, tracker }),
+                );
+
+                expect(checkouts).toHaveLength(0);
+                expect(result.applied).toEqual({ movedTo: "In Review" });
+            });
         });
     });
 });

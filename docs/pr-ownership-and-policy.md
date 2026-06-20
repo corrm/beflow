@@ -71,6 +71,20 @@ these steps:
    after each. If it is still RED once the rework budget is exhausted, the run is
    parked as **failed** (the draft PR is kept).
 
+   **Baseline pinning** — by default the gate runs against the worktree's own test
+   tree, which an autonomous agent could weaken (delete or soften an assertion) in
+   the same branch so the gate self-grades green. When `qualityGate.baselineTestGlobs`
+   is set, beflow pins the gate's definition-of-passing to the **target branch**:
+   before each gate run it restores the changed files matching those globs from the
+   base branch into the worktree, runs the commands against the run's implementation
+   plus the baseline tests, then restores the worktree's own files. A change can no
+   longer grade itself against tests it just modified. This is orthogonal to policy
+   blast-radius: AGENTOWNERS governs _which paths_ a change may touch, while baseline
+   pinning governs _which tests judge_ the change. The agent's test edits remain on
+   the branch and are reviewed normally; only the automated gate run uses the
+   baseline. Pinning engages only for beflow-owned runs (where the base branch and
+   diff are known) and is off when the globs are unset.
+
 8. **Post-run policy** — beflow evaluates the configured policy over the diff
    and decides the PR's fate (see [Policy outcomes](#policy-outcomes) below).
 
@@ -90,6 +104,50 @@ these steps:
 A `block` or `require_approval` decision is pre-PR governance: it runs before
 the PR is visible to reviewers. It complements (and does not replace) GitHub
 branch protection rules.
+
+---
+
+## Decision log
+
+Every post-run policy decision is recorded as one append-only event in a local
+**canonical decision log** — a sibling of the runs dir, default
+`~/.beflow/decisions/decisions.ndjson` (override with `decisions.dir`). One NDJSON
+line is written per decision, at decision time, **before** any of the writeback
+branches run (and before the `allow` path's run-record GC). The tracker comment is
+ephemeral and the run record is deleted on a clean writeback, so for an `allow`
+this log is the only structured trace of _why_ the change was permitted.
+
+Each line is a self-contained `DecisionEvent`:
+
+```json
+{
+  "schemaVersion": 1,
+  "decisionId": "a1b2c3d4-…",
+  "runId": "APP-42@2026-06-20T00:00:00.000Z",
+  "key": "APP-42",
+  "prUrl": "https://github.com/acme/app/pull/99",
+  "decision": "allow",
+  "evaluator": "globs",
+  "matchedRules": [{ "decision": "allow", "paths": ["src/**"] }],
+  "changedFiles": ["src/api/auth.ts"],
+  "reason": "rule decision=allow paths=src/**",
+  "timestamp": "2026-06-20T00:00:00.000Z",
+  "changedFilesHash": "…sha256…",
+  "decisionInputHash": "…sha256…"
+}
+```
+
+`matchedRules` is the structured companion to the flattened `reason` string: it
+carries every rule that fired (its decision and matched paths/globs), not just the
+winner. `changedFilesHash` and `decisionInputHash` are SHA-256 digests that make
+the log tamper-evident for free. `evidence` and `approver` are reserved for a later
+issue and are absent today.
+
+The log is **append-only**: beflow never rewrites or truncates it. It is written
+through a `DecisionSink` adapter — a stable interface with swappable
+implementations. The only implementation today is the local NDJSON sink;
+object-storage or SIEM sinks are future drop-ins behind the same interface and the
+same event shape, not a change to the record.
 
 ---
 

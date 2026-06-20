@@ -12,6 +12,8 @@ import { resolve, resolvePolicy, resolvePr } from "../resolve/precedence.ts";
 import type { Comment, Tracker } from "../trackers/tracker.ts";
 import { renderContinuation } from "./continuation.ts";
 import { DECISION_HOLD_MESSAGE, isDecisionHeld } from "./decision.ts";
+import { buildDecisionEvent, LocalNdjsonSink, resolveDecisionsDir } from "./decisionlog.ts";
+import type { DecisionSink } from "./decisionlog.ts";
 import { isThinIssue, resolveMinBodyChars, THIN_ISSUE_MESSAGE } from "./inputquality.ts";
 import { injectAcpxMcp, nodeMcpFs } from "./mcp.ts";
 import type { McpFs, McpServer } from "./mcp.ts";
@@ -23,7 +25,14 @@ import { closePr, detectBaseBranch, editPr, hasCommits, markReady, openDraftPr }
 import type { PrRef } from "./pr.ts";
 import type { PromptSet } from "./prompts.ts";
 import { renderContract, renderLinkedContext, renderTask } from "./prompts.ts";
-import { defaultGateExec, resolveMaxRework, resolveQualityGate, runQualityGate } from "./qualitygate.ts";
+import {
+    defaultGateExec,
+    pinBaselineTests,
+    resolveBaselineTestGlobs,
+    resolveMaxRework,
+    resolveQualityGate,
+    runQualityGate,
+} from "./qualitygate.ts";
 import type { GateExec } from "./qualitygate.ts";
 import { deleteRecord, loadRecord, resolveRunsDir, saveRecord, systemClock } from "./runstore.ts";
 import type { Clock, RunRecord, RunStoreFs } from "./runstore.ts";
@@ -231,6 +240,7 @@ export interface RunIssueDeps {
     gateExec?: GateExec;
     prExec?: Exec;
     policyExec?: PolicyExec;
+    decisionSink?: DecisionSink;
 }
 
 const RESUME_STATUSES: ReadonlySet<RunRecord["status"]> = new Set([
@@ -647,11 +657,28 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
     if (effectiveJobKind === "implement" && result.report?.status === "done" && gateCommands.length > 0) {
         const gateExec = deps.gateExec ?? defaultGateExec;
 
+        // BASELINE PINNING (opt-in, beflow-owned only): pin the gate's definition-of-
+        // Passing to the TARGET branch. Before each gate run, restore the changed test
+        // Files matching `baselineTestGlobs` from the base branch; run the gate against
+        // The run's implementation + those baseline tests; then restore the worktree's
+        // Own files. An agent can no longer self-grade by weakening a test it just edited.
+        const baselineGlobs = resolveBaselineTestGlobs(deps.config, deps.registry, projectKeyOf(key));
+        const pinBaseline = beflowOwned && baselineGlobs.length > 0;
+
         // Run the gate; a runner that THROWS fails OPEN (returns undefined): the gate is
         // An enhancement, not a correctness oracle, so an unrunnable gate proceeds as done.
         async function runGate(phase: string): Promise<{ output: string; passed: boolean } | undefined> {
             try {
-                return await runQualityGate(gateCommands, cwd, gateExec);
+                if (!pinBaseline) {
+                    return await runQualityGate(gateCommands, cwd, gateExec);
+                }
+                const changedFiles = await computeChangedFiles(cwd, beflowBase, prExec);
+                const restore = await pinBaselineTests(cwd, beflowBase, changedFiles, baselineGlobs, prExec);
+                try {
+                    return await runQualityGate(gateCommands, cwd, gateExec);
+                } finally {
+                    await restore();
+                }
             } catch (err) {
                 log(
                     `beflow: ${key} quality gate could not run${phase}: ${err instanceof Error ? err.message : String(err)}; proceeding as done`,
@@ -797,13 +824,14 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
     if (beflowOwned && openedPr !== undefined && branch !== undefined && result.report?.status === "done") {
         const policyExec = deps.policyExec ?? defaultPolicyExec;
         let decision: PolicyResult;
+        let decisionFiles: string[];
         try {
-            const changedFiles = await computeChangedFiles(cwd, beflowBase, prExec);
+            decisionFiles = await computeChangedFiles(cwd, beflowBase, prExec);
             decision = await evaluatePolicy(
                 {
                     agent: effectiveAgent,
                     baseBranch: beflowBase,
-                    changedFiles,
+                    changedFiles: decisionFiles,
                     issueKey: key,
                     jobKind: effectiveJobKind,
                     repo: resolved.repo,
@@ -820,6 +848,27 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                 `beflow could not evaluate the post-run policy: ${err instanceof Error ? err.message : String(err)}`,
             );
         }
+
+        // Write the canonical, append-only decision event BEFORE any writeback (and,
+        // Critically, before the allow path's deleteRecord can run): the tracker
+        // Comment is ephemeral, the run record is GC'd, but this log survives both.
+        const sink =
+            deps.decisionSink ?? new LocalNdjsonSink(resolveDecisionsDir(deps.config.decisions?.dir), deps.runsFs);
+        await sink.emit(
+            buildDecisionEvent(
+                {
+                    changedFiles: decisionFiles,
+                    decision: decision.decision,
+                    evaluator: resolvedPolicy.evaluator,
+                    key,
+                    matchedRules: decision.matchedRules,
+                    prUrl: openedPr.url,
+                    reason: decision.reason,
+                    runId: `${key}@${record.updatedAt}`,
+                },
+                clock,
+            ),
+        );
 
         if (decision.decision === "block") {
             try {

@@ -1,6 +1,7 @@
 import type { AgentDriver } from "../agent/driver.ts";
 import type { Config, Registry } from "../config/schema.ts";
 import type { Issue, Resolved } from "../model/types.ts";
+import { resolvePr } from "../resolve/precedence.ts";
 import { IssueNotFoundError } from "../trackers/tracker.ts";
 import type { Tracker } from "../trackers/tracker.ts";
 import { assembleContinuation, renderContinuation } from "./continuation.ts";
@@ -394,9 +395,11 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
         });
         if (ctx.newComments.length > 0) {
             await deps.tracker.removeProperty(item, CHANGES_REQUESTED_LABEL);
+            const beflowOwnsPr =
+                record?.jobKind === "implement" && resolvePr(config, registry, projectKey).owner === "beflow";
             await runIssue(item.key, AUTONOMOUS_DISPATCH, {
                 ...runIssueDeps(deps, config, registry, log),
-                continuation: renderContinuation(deps.prompts, ctx),
+                continuation: renderContinuation(deps.prompts, ctx, beflowOwnsPr),
             });
             log(`beflow: watch ${projectKey} — rework ${item.key}`);
             return { action: "rework", key: item.key };
@@ -456,8 +459,13 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
             }
 
             const ctx = await assembleContinuation(deps.tracker, item, { record, since: record.updatedAt });
-            const ciNote = `The CI checks on this PR are failing (${checks.failing.join(", ") || "unknown checks"}). Investigate the failures, fix them, and update the existing PR (${record.prUrl}). Then emit the report block.`;
-            const continuation = `${ciNote}\n\n${renderContinuation(deps.prompts, ctx)}`;
+            const beflowOwnsPr =
+                record.jobKind === "implement" && resolvePr(config, registry, projectKey).owner === "beflow";
+            const failingChecks = checks.failing.join(", ") || "unknown checks";
+            const ciNote = beflowOwnsPr
+                ? `The CI checks on this PR are failing (${failingChecks}). Investigate the failures, fix them, and push your branch (beflow updates the PR). Then emit the report block.`
+                : `The CI checks on this PR are failing (${failingChecks}). Investigate the failures, fix them, and update the existing PR (${record.prUrl}). Then emit the report block.`;
+            const continuation = `${ciNote}\n\n${renderContinuation(deps.prompts, ctx, beflowOwnsPr)}`;
             await runIssue(item.key, AUTONOMOUS_DISPATCH, {
                 ...runIssueDeps(deps, config, registry, log),
                 continuation,
@@ -581,9 +589,11 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
             if (record?.escalatedAt !== undefined) {
                 await notifyEscalation(deps.notify, item, "resolved", "A human responded; resuming.");
             }
+            const beflowOwnsPr =
+                record?.jobKind === "implement" && resolvePr(config, registry, projectKey).owner === "beflow";
             await runIssue(item.key, AUTONOMOUS_DISPATCH, {
                 ...runIssueDeps(deps, config, registry, log),
-                continuation: renderContinuation(deps.prompts, ctx),
+                continuation: renderContinuation(deps.prompts, ctx, beflowOwnsPr),
             });
             log(`beflow: watch ${projectKey} — answered ${item.key}`);
             return { action: "answered", key: item.key };

@@ -582,7 +582,7 @@ function cmdRuns(args: { key?: string | undefined }, ctx: CliContext): number {
 
 async function cmdSetup(args: { project: string; prune?: boolean | undefined }, ctx: CliContext): Promise<number> {
     const { tracker, config, registry, dir, log } = ctx;
-    const agents = [...new Set([config.defaults.agent, ...Object.keys(config.agents)])].sort();
+    const agents = [...new Set([config.agent, ...Object.keys(config.agents)])].sort();
     await setupProject(args.project, {
         agents,
         dir,
@@ -733,7 +733,7 @@ function resolveEnrich(project: string, ctx: CliContext): EnrichIssue | undefine
     }
     const enrichPrompt = loadEnrichPrompt(defaultPromptResolveDeps(ctx.dir, ctx.config.prompts?.dir));
     return defaultEnrichIssue({
-        defaultAgent: ctx.config.defaults.agent,
+        defaultAgent: ctx.config.agent,
         driver: ctx.deps.createDriver(resolveAcpxCommand(ctx.config)),
         enrichPrompt,
         log: ctx.log,
@@ -807,7 +807,7 @@ async function cmdGc(
 async function boardChecks(deps: CliDeps, dir: string): Promise<DoctorCheck[]> {
     const config = deps.loadConfig(dir);
     const registry = deps.loadRegistry(dir);
-    const agents = [...new Set([config.defaults.agent, ...Object.keys(config.agents)])].sort();
+    const agents = [...new Set([config.agent, ...Object.keys(config.agents)])].sort();
     const tracker = deps.createTracker(config, registry);
 
     const checks: DoctorCheck[] = [];

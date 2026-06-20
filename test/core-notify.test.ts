@@ -38,7 +38,9 @@ import type {
 
 const config: Config = {
     agents: { claude: { command: "claude" } },
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "autonomous" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "autonomous",
     runs: { dir: "/runs" },
     tracker: "plane",
     trackers: {},

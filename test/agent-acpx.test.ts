@@ -14,7 +14,9 @@ import type { Config } from "../src/config/schema.ts";
 
 const baseConfig: Config = {
     agents: {},
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "supervised" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "supervised",
     tracker: "plane",
     trackers: {},
 };

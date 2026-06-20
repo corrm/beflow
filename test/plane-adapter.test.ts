@@ -1695,7 +1695,9 @@ describe("PlaneTracker.createProject", () => {
 describe("createPlaneTracker", () => {
     const config: Config = {
         agents: {},
-        defaults: { agent: "claude", onManualMove: "yield", runMode: "supervised" },
+        agent: "claude",
+        onManualMove: "yield",
+        runMode: "supervised",
         tracker: "plane",
         trackers: {
             plane: {

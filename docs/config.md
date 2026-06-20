@@ -16,7 +16,8 @@ variables (see [Secrets](#secrets)).
 | ----------- | -------- | --------------------------------------------------------------------------------------------------------- |
 | `tracker`   | yes      | Active tracker: `"plane"` or `"linear"`.                                                                  |
 | `trackers`  | yes      | Per-tracker connection settings (see [Trackers](#trackers)).                                              |
-| `defaults`  | yes      | Global run defaults (see [Defaults](#defaults)).                                                          |
+| `agent`     | yes      | Default agent name (a key under `agents`). See [Run defaults](#run-defaults).                             |
+| `runMode`   | yes      | Default run mode: `autonomous` or `supervised`. See [Run defaults](#run-defaults).                        |
 | `workspace` | yes      | `{ id, slug }` of the tracker workspace.                                                                  |
 | `projects`  | yes      | Map of project key → project config (see [Projects](#projects)).                                          |
 | `agents`    | no       | Map of agent name → agent config (see [Agents](#agents)).                                                 |
@@ -44,15 +45,14 @@ variables (see [Secrets](#secrets)).
 Only the active tracker (`tracker`) needs to be present. `apiKeyEnv` names the
 environment variable that holds the API key.
 
-## Defaults
+## Run defaults
 
-Global defaults; every project may override any of these under
-`projects.<KEY>.<same-key>`.
+These top-level keys set the defaults a run resolves against; every project may
+override any of them under `projects.<KEY>.<same-key>`. `agent` and `runMode` are
+the two required ones (listed in [Top level](#top-level)); the rest are optional.
 
 | Key             | Required | Description                                                                                                                              |
 | --------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `agent`         | yes      | Default agent name (a key under `agents`).                                                                                               |
-| `runMode`       | yes      | Default run mode: `autonomous` or `supervised`.                                                                                          |
 | `assignee`      | no       | Tracker user id; beflow assigns the item to this user when it picks it up.                                                               |
 | `onManualMove`  | no       | `yield` (default) lets a live run finish but skips writeback if a human moved the card; `abort` also cancels the agent.                  |
 | `linkedContext` | no       | Inline parent-epic + attachment context into the agent task. Default on.                                                                 |
@@ -98,13 +98,14 @@ or a Linear team) and the local repos its work lands in.
 | `root`             | yes      | Absolute path to the project root.                                                            |
 | `plane_project_id` | no       | The Plane project UUID (Plane only; Linear maps the key to a team).                           |
 | `limits`           | no       | `{ inReview, inProgress, maxRunMinutes }` — WIP caps and a per-run wall-clock limit.          |
-| `defaults`         | no       | `{ agent, runMode }` overriding the globals for this project.                                 |
+| `agent`            | no       | Agent name overriding the global default for this project.                                    |
+| `runMode`          | no       | Run mode overriding the global default for this project.                                      |
 | `ci`               | no       | `{ autoReworkOnRed }` — re-dispatch rework when an In-Review PR's CI goes red.                |
 | `routing`          | no       | Per-project job-kind → agent routing.                                                         |
 | `scheduling`       | no       | `{ activeCycleOnly }` — only dispatch Todo items in the active cycle.                         |
 
 Per-project `deadLetter`, `inputQuality`, `qualityGate`, `review`, `sla`, and
-`telemetry` mirror their [Defaults](#defaults) counterparts and override them.
+`telemetry` mirror their [Run defaults](#run-defaults) counterparts and override them.
 
 ### Repos: one project, several repositories
 

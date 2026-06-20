@@ -5,6 +5,11 @@ import type { PromptSet } from "./prompts.ts";
 import { renderTemplate } from "./prompts.ts";
 import type { RunRecord } from "./runstore.ts";
 
+const AGENT_OWNED_PR_CONTINUATION_INSTRUCTION =
+    "If a pull request is already open for this item, UPDATE it — do not open a new one.";
+const BEFLOW_OWNED_PR_CONTINUATION_INSTRUCTION =
+    "Push your changes. The existing pull request updates automatically — do NOT run `gh pr create` or `gh pr edit`.";
+
 export interface ContinuationContext {
     newComments: Comment[];
     prUrl?: string;
@@ -43,13 +48,16 @@ export async function assembleContinuation(
     };
 }
 
-export function renderContinuation(prompts: PromptSet, ctx: ContinuationContext): string {
+export function renderContinuation(prompts: PromptSet, ctx: ContinuationContext, beflowOwnsPr = false): string {
     const priorReport =
         ctx.priorReport !== undefined ? `${ctx.priorReport.status} — ${ctx.priorReport.summary}` : "(none)";
     const prUrl = ctx.prUrl ?? "(none)";
     const reviewComments =
         ctx.newComments.length > 0 ? ctx.newComments.map((c) => `- ${c.body}`).join("\n") : "No new comments.";
     return renderTemplate("continuation", prompts.continuation, {
+        pr_continuation_instruction: beflowOwnsPr
+            ? BEFLOW_OWNED_PR_CONTINUATION_INSTRUCTION
+            : AGENT_OWNED_PR_CONTINUATION_INSTRUCTION,
         pr_url: prUrl,
         prior_report: priorReport,
         review_comments: reviewComments,

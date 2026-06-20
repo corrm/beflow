@@ -8,7 +8,6 @@ import type { ResolveInputs } from "../src/resolve/precedence.ts";
 
 const project: Project = {
     default_repo: "r",
-    defaults: undefined,
     module_repo_map: {},
     name: "X",
     plane_project_id: "p",

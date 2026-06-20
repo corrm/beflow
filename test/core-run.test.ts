@@ -47,7 +47,9 @@ import type {
 
 const config: Config = {
     agents: { claude: { command: "claude" } },
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "supervised" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "supervised",
     runs: { dir: "/runs" },
     tracker: "plane",
     trackers: {},
@@ -402,7 +404,7 @@ describe("runIssue", () => {
     it("assigns the configured user after moving to In Progress", async () => {
         const tracker = new FakeTracker(makeIssue());
         const { driver } = fakeDriver({ status: "done", summary: "s" });
-        const cfg: Config = { ...config, defaults: { ...config.defaults, assignee: "u-1" } };
+        const cfg: Config = { ...config, assignee: "u-1" };
         await runIssue("CG-42", {}, deps({ config: cfg, driver, tracker }));
 
         const moveIdx = tracker.calls.findIndex((c) => c.kind === "updateState" && c.state === "In Progress");
@@ -545,7 +547,7 @@ describe("runIssue", () => {
         return {
             ...config,
             agents: { claude: { command: "claude", model: "sonnet" } },
-            defaults: { ...config.defaults, telemetry: { inComment } },
+            telemetry: { inComment },
         };
     }
 
@@ -1220,7 +1222,7 @@ describe("runIssue", () => {
         };
         const { git } = fakeGit();
         const { fs, store } = memRunsFs();
-        const abortCfg: Config = { ...config, defaults: { ...config.defaults, onManualMove: "abort" } };
+        const abortCfg: Config = { ...config, onManualMove: "abort" };
         const result = await runIssue(
             "CG-42",
             {},
@@ -1336,7 +1338,7 @@ describe("runIssue", () => {
 
     // The input-quality gate fires only on a FRESH autonomous dispatch. The config here
     // Defaults to autonomous so resolveRun picks runMode "autonomous" for the issue.
-    const autonomousConfig: Config = { ...config, defaults: { ...config.defaults, runMode: "autonomous" } };
+    const autonomousConfig: Config = { ...config, runMode: "autonomous" };
 
     function thinRegistry(min: number): Registry {
         return {
@@ -1551,7 +1553,7 @@ describe("runIssue", () => {
             parent: { body: "epic goal", key: "CG-1", title: "Epic", type: "Epic" },
         });
         const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
-        const cfg: Config = { ...config, defaults: { ...config.defaults, linkedContext: false } };
+        const cfg: Config = { ...config, linkedContext: false };
         await runIssue("CG-42", {}, deps({ config: cfg, driver, tracker }));
 
         expect(tracker.contextCalls).toBe(0);
@@ -1851,6 +1853,258 @@ describe("runIssue", () => {
             expect(result.applied).toEqual({ movedTo: "In Review" });
         });
     });
+
+    describe("beflow-owned PR", () => {
+        const implementIssue = (): Issue => makeIssue({ meta: { jobKind: "implement", runMode: "autonomous" } });
+
+        // A registry whose CG project owns the PR via beflow, against a concrete base
+        // branch (so detectBaseBranch never calls gh), with an optional policy block.
+        function beflowRegistry(policy?: Registry["projects"]["CG"]["policy"]): Registry {
+            return {
+                ...registry,
+                projects: {
+                    ...registry.projects,
+                    CG: {
+                        ...registry.projects.CG!,
+                        pr: { baseBranch: "main", owner: "beflow" },
+                        ...(policy !== undefined ? { policy } : {}),
+                    },
+                },
+            };
+        }
+
+        // A configurable fake `Exec` for the PR layer: scripts the git/gh calls that
+        // pr.ts and policy.ts issue and records every invocation for assertions.
+        function fakePrExec(opts: { commits?: number; changedFiles?: string[] } = {}): {
+            exec: Exec;
+            calls: string[][];
+        } {
+            const calls: string[][] = [];
+            const commits = opts.commits ?? 1;
+            const changed = opts.changedFiles ?? ["src/app.ts"];
+            const exec: Exec = async (cmd, args): Promise<ExecResult> => {
+                calls.push([cmd, ...args]);
+                if (cmd === "git" && args.includes("rev-list")) {
+                    return { code: 0, stderr: "", stdout: `${String(commits)}\n` };
+                }
+                if (cmd === "git" && args.includes("diff")) {
+                    return { code: 0, stderr: "", stdout: `${changed.join("\n")}\n` };
+                }
+                if (cmd === "gh" && args[0] === "pr" && args[1] === "create") {
+                    return { code: 0, stderr: "", stdout: "https://gh/pr/99\n" };
+                }
+                return { code: 0, stderr: "", stdout: "" };
+            };
+            return { calls, exec };
+        }
+
+        it("no-op (agent produced no commits): marks failed, opens no PR, keeps the worktree", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const { driver } = fakeDriver({ status: "done", summary: "claims done" });
+            const { git, calls: gitCalls } = fakeGit();
+            const { exec, calls: prCalls } = fakePrExec({ commits: 0 });
+            const { fs, store } = memRunsFs();
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({ driver, git, prExec: exec, registry: beflowRegistry(), runsFs: fs, tracker }),
+            );
+
+            // Failed writeback (failed label + Needs Input), no PR created, worktree kept.
+            expect(tracker.calls.some((c) => c.kind === "addProperty" && c.label === "failed")).toBe(true);
+            expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "Needs Input")).toBe(true);
+            expect(prCalls.some((c) => c[0] === "gh" && c[2] === "create")).toBe(false);
+            expect(gitCalls.some((c) => c.includes("remove"))).toBe(false);
+            expect(onlyRecord(store)?.status).toBe("failed");
+            expect(result.applied?.movedTo).toBe("Needs Input");
+        });
+
+        it("commits + allow policy: opens a draft PR, marks it ready, → In Review with the PR linked", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+            const { git } = fakeGit();
+            const { exec, calls: prCalls } = fakePrExec();
+            const { fs, store } = memRunsFs();
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    driver,
+                    git,
+                    prExec: exec,
+                    registry: beflowRegistry({ evaluator: "off" }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            expect(prCalls.some((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "create")).toBe(true);
+            expect(prCalls.some((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "ready")).toBe(true);
+            expect(result.applied).toEqual({ movedTo: "In Review" });
+            // The beflow-created PR URL is linked and persisted on the record.
+            expect(tracker.calls.some((c) => c.kind === "linkPR" && c.url === "https://gh/pr/99")).toBe(true);
+            expect(onlyRecord(store)?.prUrl).toBe("https://gh/pr/99");
+        });
+
+        it("require_approval policy: leaves the PR draft, → In Review, posts an awaits-approval note", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+            const { git } = fakeGit();
+            const { exec, calls: prCalls } = fakePrExec();
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    driver,
+                    git,
+                    prExec: exec,
+                    registry: beflowRegistry({
+                        evaluator: "globs",
+                        rules: [{ decision: "require_approval", paths: ["src/**"] }],
+                    }),
+                    tracker,
+                }),
+            );
+
+            // Enriched (edit) but NOT marked ready — the draft is the review artifact.
+            expect(prCalls.some((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "edit")).toBe(true);
+            expect(prCalls.some((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "ready")).toBe(false);
+            expect(result.applied).toEqual({ movedTo: "In Review" });
+            expect(tracker.calls.some((c) => c.kind === "comment" && c.body.includes("requires human approval"))).toBe(
+                true,
+            );
+        });
+
+        it("block policy: closes the PR + branch, comments the reason, routes to Needs Input (NOT In Review)", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+            const { git } = fakeGit();
+            const { exec, calls: prCalls } = fakePrExec({ changedFiles: ["infra/secrets.tf"] });
+            const { fs, store } = memRunsFs();
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    driver,
+                    git,
+                    prExec: exec,
+                    registry: beflowRegistry({
+                        evaluator: "globs",
+                        rules: [{ decision: "block", paths: ["infra/**"] }],
+                    }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            expect(prCalls.some((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "close")).toBe(true);
+            expect(prCalls.some((c) => c[0] === "git" && c.includes("-D"))).toBe(true);
+            expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "In Review")).toBe(false);
+            expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "Needs Input")).toBe(true);
+            expect(tracker.calls.some((c) => c.kind === "addProperty" && c.label === "blocked")).toBe(true);
+            expect(tracker.calls.some((c) => c.kind === "comment" && c.body.includes("Policy blocked"))).toBe(true);
+            expect(onlyRecord(store)?.status).toBe("blocked");
+            expect(result.applied?.movedTo).toBe("Needs Input");
+        });
+
+        it("gh failure while opening the PR: marks failed, keeps the worktree (retryable)", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const { driver } = fakeDriver({ status: "done", summary: "shipped" });
+            const { git, calls: gitCalls } = fakeGit();
+            const { fs, store } = memRunsFs();
+            // gh pr create fails AND gh pr view (the idempotent fallback) fails too.
+            const exec: Exec = async (cmd, args): Promise<ExecResult> => {
+                if (cmd === "git" && args.includes("rev-list")) {
+                    return { code: 0, stderr: "", stdout: "1\n" };
+                }
+                if (cmd === "gh") {
+                    return { code: 1, stderr: "gh: network error", stdout: "" };
+                }
+                return { code: 0, stderr: "", stdout: "" };
+            };
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({ driver, git, prExec: exec, registry: beflowRegistry(), runsFs: fs, tracker }),
+            );
+
+            expect(tracker.calls.some((c) => c.kind === "addProperty" && c.label === "failed")).toBe(true);
+            expect(gitCalls.some((c) => c.includes("remove"))).toBe(false);
+            expect(onlyRecord(store)?.status).toBe("failed");
+            // The PR-layer-failure park persists attempts 0: the agent succeeded,
+            // so the next dispatch must not inherit a stale attempt count.
+            expect(onlyRecord(store)?.attempts).toBe(0);
+            expect(result.applied?.movedTo).toBe("Needs Input");
+        });
+
+        it("survives a quality-gate rework: the beflow PR stays linked after the agent re-emits done", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            // Initial done → red gate → rework done (no prUrl from the agent) → green gate.
+            const reports: (Report | null)[] = [
+                { status: "done", summary: "first" },
+                { status: "done", summary: "fixed" },
+            ];
+            let call = 0;
+            const driver: AgentDriver = {
+                cancel: async () => {},
+                ensureSession: async () => {},
+                run: async (): Promise<AgentRunResult> => {
+                    const report = reports[call] ?? null;
+                    call += 1;
+                    return {
+                        exitCode: 0,
+                        raw: [],
+                        report,
+                        stream: { assistantText: "", toolCalls: [] },
+                        timedOut: false,
+                    };
+                },
+            };
+            let gateIdx = 0;
+            const gate: GateExec = async () => {
+                const out = gateIdx === 0 ? { exitCode: 1, output: "FAIL" } : { exitCode: 0, output: "ok" };
+                gateIdx += 1;
+                return out;
+            };
+            const { git } = fakeGit();
+            const { exec } = fakePrExec();
+            const { fs, store } = memRunsFs();
+            const reg = beflowRegistry({ evaluator: "off" });
+            const gated: Registry = {
+                ...reg,
+                projects: { ...reg.projects, CG: { ...reg.projects.CG!, qualityGate: { commands: ["bun test"] } } },
+            };
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({ driver, gateExec: gate, git, prExec: exec, registry: gated, runsFs: fs, tracker }),
+            );
+
+            expect(call).toBe(2);
+            expect(result.applied).toEqual({ movedTo: "In Review" });
+            expect(tracker.calls.some((c) => c.kind === "linkPR" && c.url === "https://gh/pr/99")).toBe(true);
+            expect(onlyRecord(store)?.prUrl).toBe("https://gh/pr/99");
+        });
+
+        it("agent-owned (default): beflow opens no PR; the agent's report.prUrl is linked unchanged", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const { driver } = fakeDriver({ prUrl: "http://agent/pr/1", status: "done", summary: "shipped" });
+            const { git } = fakeGit();
+            let prExecCalled = false;
+            const exec: Exec = async (): Promise<ExecResult> => {
+                prExecCalled = true;
+                return { code: 0, stderr: "", stdout: "" };
+            };
+            const { fs, store } = memRunsFs();
+            const result = await runIssue("CG-42", {}, deps({ driver, git, prExec: exec, runsFs: fs, tracker }));
+
+            // owner defaults to agent → beflow never touches the PR layer.
+            expect(prExecCalled).toBe(false);
+            expect(result.applied).toEqual({ movedTo: "In Review" });
+            expect(tracker.calls.some((c) => c.kind === "linkPR" && c.url === "http://agent/pr/1")).toBe(true);
+            expect(onlyRecord(store)?.prUrl).toBe("http://agent/pr/1");
+        });
+    });
 });
 
 describe("runSupervised", () => {
@@ -1902,7 +2156,7 @@ describe("runSupervised", () => {
 
     it("assigns the configured user after moving to In Progress", async () => {
         const tracker = new FakeTracker(makeIssue());
-        const cfg: Config = { ...config, defaults: { ...config.defaults, assignee: "u-1" } };
+        const cfg: Config = { ...config, assignee: "u-1" };
         await runSupervised(
             "CG-42",
             {},
@@ -2134,7 +2388,7 @@ describe("runOpen", () => {
 
     it("assigns the configured user after moving to In Progress", async () => {
         const tracker = new FakeTracker(makeIssue());
-        const cfg: Config = { ...config, defaults: { ...config.defaults, assignee: "u-1" } };
+        const cfg: Config = { ...config, assignee: "u-1" };
         await runOpen(
             "CG-42",
             {},

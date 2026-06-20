@@ -6,7 +6,9 @@ import type { GateExec } from "../src/core/qualitygate.ts";
 
 const config: Config = {
     agents: {},
-    defaults: { agent: "claude", onManualMove: "yield", runMode: "autonomous" },
+    agent: "claude",
+    onManualMove: "yield",
+    runMode: "autonomous",
     tracker: "plane",
     trackers: {},
 };
@@ -34,12 +36,12 @@ describe("resolveQualityGate", () => {
     });
 
     it("falls back to the global default commands", () => {
-        const cfg: Config = { ...config, defaults: { ...config.defaults, qualityGate: { commands: ["bun test"] } } };
+        const cfg: Config = { ...config, qualityGate: { commands: ["bun test"] } };
         expect(resolveQualityGate(cfg, registryWith(), "CG")).toEqual(["bun test"]);
     });
 
     it("project commands override the global default", () => {
-        const cfg: Config = { ...config, defaults: { ...config.defaults, qualityGate: { commands: ["global"] } } };
+        const cfg: Config = { ...config, qualityGate: { commands: ["global"] } };
         const reg = registryWith({ qualityGate: { commands: ["project"] } });
         expect(resolveQualityGate(cfg, reg, "CG")).toEqual(["project"]);
     });

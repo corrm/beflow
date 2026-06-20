@@ -22,7 +22,9 @@ const registry: Registry = {
 function config(overrides: Partial<Config>): Config {
     return {
         agents: {},
-        defaults: { agent: "claude", onManualMove: "yield", runMode: "supervised" },
+        agent: "claude",
+        onManualMove: "yield",
+        runMode: "supervised",
         tracker: "plane",
         trackers: {
             linear: { apiKeyEnv: "LINEAR_API_KEY" },

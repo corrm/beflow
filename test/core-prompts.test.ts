@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
+import { renderContinuation } from "../src/core/continuation.ts";
+import type { ContinuationContext } from "../src/core/continuation.ts";
 import {
     buildPromptContext,
     loadPromptSet,
@@ -255,15 +257,17 @@ describe("loadPromptSet — override cascade", () => {
 });
 
 describe("implement.md default — per-mode guidance", () => {
-    it("contains UPDATE the existing pull request guidance for continuation items", () => {
-        const set = defaultSet();
-        expect(set.implement).toContain("UPDATE the existing pull request");
+    it("rendered agent-owned contract contains UPDATE the existing pull request guidance for continuation items", () => {
+        const c = renderContract(defaultSet(), "implement", issue(), REPO);
+        expect(c).toContain("UPDATE the existing pull request");
     });
 
-    it("instructs use of a to-do tool and requires every item complete before commit", () => {
+    it("instructs use of a to-do tool and requires every item complete before shipping", () => {
         const set = defaultSet();
         expect(set.implement).toContain("to-do/task tool");
-        expect(set.implement).toMatch(/every item on your to-do list is marked complete[\s\S]*commit/);
+        expect(set.implement).toContain("every item on your to-do list is marked complete");
+        const c = renderContract(defaultSet(), "implement", issue(), REPO);
+        expect(c).toMatch(/every item on your to-do list is marked complete[\s\S]*commit/);
     });
 });
 
@@ -273,11 +277,12 @@ describe("continuation.md default", () => {
         expect(set.continuation).toContain("returning to you for continuation");
     });
 
-    it("contains all three placeholders", () => {
+    it("contains all four placeholders", () => {
         const set = defaultSet();
         expect(set.continuation).toContain("{{prior_report}}");
         expect(set.continuation).toContain("{{pr_url}}");
         expect(set.continuation).toContain("{{review_comments}}");
+        expect(set.continuation).toContain("{{pr_continuation_instruction}}");
     });
 });
 
@@ -330,5 +335,66 @@ describe("renderLinkedContext", () => {
         );
         expect(out).toContain('Parent Epic CG-1 "Epic":');
         expect(out).toContain("- trace.log (https://x/trace)");
+    });
+});
+
+describe("renderContract — PR ownership mode", () => {
+    it("agent-owned (default): implement contract contains gh pr create instruction and prUrl", () => {
+        const c = renderContract(defaultSet(), "implement", issue(), REPO);
+        expect(c).toMatch(/\bgh\b/);
+        expect(c).toContain("prUrl");
+        expect(c).not.toContain("gh pr create instruction");
+    });
+
+    it("agent-owned (explicit false): implement contract contains gh and prUrl", () => {
+        const c = renderContract(defaultSet(), "implement", issue(), REPO, false);
+        expect(c).toMatch(/open a pull request with `gh`/);
+        expect(c).toContain("prUrl");
+    });
+
+    it("beflow-owned: implement contract does not instruct agent to open a PR via gh", () => {
+        const c = renderContract(defaultSet(), "implement", issue(), REPO, true);
+        expect(c).not.toMatch(/open a pull request with `gh`/);
+        expect(c).not.toContain("put the PR URL in");
+    });
+
+    it("beflow-owned: implement contract instructs agent to commit and push only", () => {
+        const c = renderContract(defaultSet(), "implement", issue(), REPO, true);
+        expect(c).toContain("commit and push your branch");
+        expect(c).toMatch(/Do NOT run `gh pr create`/);
+    });
+
+    it("beflow-owned: implement contract continuation instruction does not instruct updating the PR", () => {
+        const c = renderContract(defaultSet(), "implement", issue(), REPO, true);
+        expect(c).not.toContain("UPDATE the existing pull request");
+        expect(c).toMatch(/do NOT run `gh pr create` or `gh pr edit`/);
+    });
+});
+
+describe("renderContinuation — PR ownership mode", () => {
+    function emptyContinuationCtx(): ContinuationContext {
+        return { newComments: [] };
+    }
+
+    it("agent-owned (default): continuation contains UPDATE the existing pull request", () => {
+        const out = renderContinuation(defaultSet(), emptyContinuationCtx());
+        expect(out).toContain("UPDATE it — do not open a new one");
+    });
+
+    it("agent-owned (explicit false): continuation contains UPDATE the existing pull request", () => {
+        const out = renderContinuation(defaultSet(), emptyContinuationCtx(), false);
+        expect(out).toContain("UPDATE it — do not open a new one");
+    });
+
+    it("beflow-owned: continuation does not instruct agent to update the PR", () => {
+        const out = renderContinuation(defaultSet(), emptyContinuationCtx(), true);
+        expect(out).not.toContain("UPDATE it");
+        expect(out).not.toContain("open a new one");
+    });
+
+    it("beflow-owned: continuation instructs push only and forbids gh pr commands", () => {
+        const out = renderContinuation(defaultSet(), emptyContinuationCtx(), true);
+        expect(out).toContain("Push your changes");
+        expect(out).toMatch(/do NOT run `gh pr create` or `gh pr edit`/);
     });
 });

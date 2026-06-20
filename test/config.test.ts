@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { loadConfig, loadRegistry } from "../src/config/load.ts";
+import { CONFIG_BOOTSTRAP } from "../src/config/paths.ts";
 import { fileSchema } from "../src/config/schema.ts";
 
 const dirs: string[] = [];
@@ -27,7 +28,8 @@ const validFile = {
     agents: {
         claude: { args: ["--dangerously-skip-permissions"], command: "claude-acp" },
     },
-    defaults: { agent: "claude", runMode: "supervised" },
+    agent: "claude",
+    runMode: "supervised",
     projects: {
         CG: {
             default_repo: "bin",
@@ -51,12 +53,12 @@ const validFile = {
 } as const;
 
 describe("loadConfig", () => {
-    it("returns the config slice (tracker, defaults, agents) from config.json", () => {
+    it("returns the config slice (tracker, agent, runMode, agents) from config.json", () => {
         const dir = tmp();
         writeFileSync(join(dir, "config.json"), JSON.stringify(validFile));
         const config = loadConfig(dir);
         expect(config.tracker).toBe("plane");
-        expect(config.defaults.agent).toBe("claude");
+        expect(config.agent).toBe("claude");
         expect(config.agents.claude?.args).toEqual(["--dangerously-skip-permissions"]);
         // The registry slice is not part of Config.
         expect("workspace" in config).toBe(false);
@@ -72,7 +74,7 @@ describe("loadConfig", () => {
 
     it("throws a useful message on invalid config (bad runMode)", () => {
         const dir = tmp();
-        const bad = { ...validFile, defaults: { agent: "claude", runMode: "attended" } };
+        const bad = { ...validFile, runMode: "attended" };
         writeFileSync(join(dir, "config.json"), JSON.stringify(bad));
         expect(() => loadConfig(dir)).toThrow(/config\.json failed validation/);
     });
@@ -111,5 +113,11 @@ describe("loadRegistry", () => {
 
     it("throws on missing config.json", () => {
         expect(() => loadRegistry(tmp())).toThrow(/cannot read config file/);
+    });
+});
+
+describe("CONFIG_BOOTSTRAP", () => {
+    it("the first-run bootstrap template parses against fileSchema", () => {
+        expect(fileSchema.safeParse(JSON.parse(CONFIG_BOOTSTRAP)).success).toBe(true);
     });
 });

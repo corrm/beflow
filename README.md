@@ -17,11 +17,20 @@ run: beflow resolves a task + a repo + a contract, hands them to a coding-agent
 CLI, and writes the structured result back to the board. The agent never knows
 which tracker it's serving, so the same agent works across Plane and Linear.
 
-```
-   Tracker adapter           beflow core              Agent adapter
-  (Plane | Linear)  ──fetch──▶  resolve repo+agent  ──run──▶  (claude | …)
-        ▲                       +job kind+run mode              │
-        └────────────────── write back report ◀────────────────┘
+```mermaid
+flowchart LR
+  T["Tracker adapter<br/>Plane | Linear"]
+  subgraph C["beflow core"]
+    R["resolve repo + agent<br/>+ job kind + run mode"]
+    G["gates + policy"]
+    P["open / ready / block PR"]
+  end
+  A["Agent adapter<br/>claude | acpx | omp"]
+  T -- fetch issue --> R
+  R --> G --> P
+  P -- run in worktree --> A
+  A -- report --> G
+  C -- write back report --> T
 ```
 
 ---
@@ -87,6 +96,35 @@ See the [config reference](docs/config.md) for every setting and
 Runs are **resumable**: each persists a run record and keeps its worktree until
 the item is Done, so an interrupted run picks up where it left off.
 
+In `--auto` mode with `pr.owner: "beflow"` (the beflow-owned pipeline), beflow
+gates the issue before running the agent, then owns the full PR lifecycle —
+opening a draft, running the quality gate, evaluating post-run policy, and
+writing back to the board — without any `gh` call from the agent itself. The
+post-run policy gate supports `globs`, `agentowners`, `command`, and `off`
+evaluators — see [PR ownership and policy](docs/pr-ownership-and-policy.md).
+
+```mermaid
+flowchart TD
+  picks["pick up issue"] --> dgate{"decision gate<br/>(needs-decision?)"}
+  dgate -- held --> ni1["→ Needs Input"]
+  dgate -- ok --> iq{"input-quality<br/>(too thin?)"}
+  iq -- thin --> ni2["→ Needs Input"]
+  iq -- ok --> wt["create worktree beflow/&lt;key&gt;"]
+  wt --> ag["agent: commit + push (no gh)"]
+  ag --> noop{"any commits?"}
+  noop -- no --> failkeep["failed (keep worktree)"]
+  noop -- yes --> draft["beflow opens DRAFT PR"]
+  draft --> qg{"quality gate"}
+  qg -- RED after rework --> failkeep2["failed (keep draft PR)"]
+  qg -- green --> pol{"post-run policy"}
+  pol -- block --> blk["close PR + delete branch<br/>→ Needs Input"]
+  pol -- require_approval --> appr["enrich body, leave DRAFT<br/>→ In Review + awaits-approval note"]
+  pol -- allow --> al["enrich body + mark ready<br/>→ In Review"]
+```
+
+See [PR ownership and policy](docs/pr-ownership-and-policy.md) for the full
+configuration reference and policy examples.
+
 ## The board is the control center
 
 beflow drives a simple board and you steer from it:
@@ -151,6 +189,7 @@ never in `~/beflow/config.json`.
 
 - [Command reference](docs/commands.md) — every command and flag
 - [Config reference](docs/config.md) — every `config.json` setting
+- [PR ownership and policy](docs/pr-ownership-and-policy.md) — beflow-owned PR creation, post-run policy gating
 - [Design](docs/DESIGN.md) — architecture and the run pipeline
 - [Lifecycle](docs/lifecycle.md) — the board as the control center
 - [Operating model](docs/OPERATING-MODEL.md) — the queue-based workflow

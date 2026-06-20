@@ -24,12 +24,15 @@ function makeRecord(over: Partial<RunRecord> = {}): RunRecord {
     };
 }
 
-function makeConfig(over: Partial<Config["defaults"]> = {}): Config {
+function makeConfig(over: Partial<Config> = {}): Config {
     return {
         agents: {},
-        defaults: { agent: "claude", onManualMove: "yield", runMode: "autonomous", ...over },
+        agent: "claude",
+        onManualMove: "yield",
+        runMode: "autonomous",
         tracker: "plane",
         trackers: {},
+        ...over,
     };
 }
 

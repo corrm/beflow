@@ -33,3 +33,30 @@ export interface Resolved {
     repoPath: string;
     runMode: RunMode;
 }
+
+export type PrOwner = "beflow" | "agent";
+
+export interface ResolvedPr {
+    owner: PrOwner;
+    baseBranch: string;
+}
+
+export type PolicyEvaluator = "globs" | "command" | "agentowners" | "off";
+
+export type PolicyDecision = "block" | "require_approval" | "allow";
+
+export type PolicyOnBlock = "comment";
+
+export interface PolicyRule {
+    paths?: string[];
+    agent?: string;
+    decision: PolicyDecision;
+}
+
+export interface ResolvedPolicy {
+    evaluator: PolicyEvaluator;
+    command?: string[];
+    rules?: PolicyRule[];
+    agentownersPath?: string;
+    onBlock: PolicyOnBlock;
+}

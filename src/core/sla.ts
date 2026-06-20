@@ -8,7 +8,7 @@ export interface SlaThresholds {
 
 export function resolveSla(config: Config, registry: Registry, projectKey: string): SlaThresholds {
     const projectSla = registry.projects[projectKey]?.sla;
-    const globalSla = config.defaults.sla;
+    const globalSla = config.sla;
     const inReviewMinutes = projectSla?.inReviewMinutes ?? globalSla?.inReviewMinutes;
     const needsInputMinutes = projectSla?.needsInputMinutes ?? globalSla?.needsInputMinutes;
     return {

@@ -20,7 +20,7 @@ export function shouldQuarantine(attempts: number, threshold: number): boolean {
 /** Project-over-default-over-3 resolution of the unified dead-letter threshold. */
 export function resolveDeadLetterThreshold(config: Config, registry: Registry, projectKey: string): number {
     const projectMax = registry.projects[projectKey]?.deadLetter?.maxAttempts;
-    const globalMax = config.defaults.deadLetter?.maxAttempts;
+    const globalMax = config.deadLetter?.maxAttempts;
     return projectMax ?? globalMax ?? DEFAULT_MAX_ATTEMPTS;
 }
 

@@ -104,7 +104,7 @@ function memGcFs(names: string[], mtimes: Record<string, number> = {}): { fs: Gc
     return { fs, removed };
 }
 
-function record(key: string): RunRecord {
+function record(key: string, status: RunRecord["status"] = "in_progress"): RunRecord {
     return {
         agent: "claude",
         cwd: `/wt/${key.toLowerCase()}`,
@@ -112,7 +112,7 @@ function record(key: string): RunRecord {
         jobKind: "implement",
         runMode: "autonomous",
         sessionName: "s",
-        status: "in_progress",
+        status,
         updatedAt: "2026-06-16T00:00:00.000Z",
     };
 }
@@ -325,5 +325,145 @@ describe("runGc", () => {
         const removeCalls = calls.filter((c) => c.args.includes("remove"));
         expect(removeCalls).toHaveLength(1);
         expect(removeCalls[0]?.args).toContain("/wt/cg-old");
+    });
+
+    it("--prune reaps a blocked record's worktree and deletes its local branch", async () => {
+        const { calls, git } = fakeGit({ "cg-blk": { repo: "/repo/bin" } });
+        const { fs } = memGcFs(["cg-blk"]);
+        const plan = await runGc({
+            fs,
+            git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([record("CG-BLK", "blocked")]),
+            worktreesDir: WORKTREES,
+        });
+        expect(plan.pruned.map((o) => o.name)).toEqual(["cg-blk"]);
+        const removeCall = calls.find((c) => c.args.includes("remove"));
+        expect(removeCall?.args).toEqual(["-C", "/repo/bin", "worktree", "remove", "/wt/cg-blk", "--force"]);
+        const branchCall = calls.find((c) => c.args.includes("branch"));
+        expect(branchCall?.args).toEqual(["-C", "/repo/bin", "branch", "-D", "beflow/cg-blk"]);
+    });
+
+    it("holds a dirty blocked worktree under --prune, reaps it under --force", async () => {
+        const specs = { "cg-blk": { dirty: true, repo: "/repo/bin" } };
+
+        const held = await runGc({
+            fs: memGcFs(["cg-blk"]).fs,
+            git: fakeGit(specs).git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([record("CG-BLK", "blocked")]),
+            worktreesDir: WORKTREES,
+        });
+        expect(held.pruned).toEqual([]);
+        expect(held.held.map((o) => o.name)).toEqual(["cg-blk"]);
+        expect(held.held[0]?.heldReason).toBe("uncommitted changes");
+
+        const forced = fakeGit(specs);
+        const plan = await runGc({
+            force: true,
+            fs: memGcFs(["cg-blk"]).fs,
+            git: forced.git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([record("CG-BLK", "blocked")]),
+            worktreesDir: WORKTREES,
+        });
+        expect(plan.pruned.map((o) => o.name)).toEqual(["cg-blk"]);
+        const removeCall = forced.calls.find((c) => c.args.includes("remove"));
+        expect(removeCall?.args).toEqual(["-C", "/repo/bin", "worktree", "remove", "/wt/cg-blk", "--force"]);
+        const branchCall = forced.calls.find((c) => c.args.includes("branch"));
+        expect(branchCall?.args).toEqual(["-C", "/repo/bin", "branch", "-D", "beflow/cg-blk"]);
+    });
+
+    it("does not delete a held dirty blocked worktree's local branch under --prune", async () => {
+        const { calls, git } = fakeGit({ "cg-blk": { dirty: true, repo: "/repo/bin" } });
+        const { fs, removed } = memGcFs(["cg-blk"]);
+        const plan = await runGc({
+            fs,
+            git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([record("CG-BLK", "blocked")]),
+            worktreesDir: WORKTREES,
+        });
+        expect(plan.pruned).toEqual([]);
+        expect(removed).toEqual([]);
+        expect(calls.some((c) => c.args.includes("remove") || c.args.includes("branch"))).toBe(false);
+    });
+
+    it("report-only (no --prune) reports a blocked worktree but removes nothing", async () => {
+        const { calls, git } = fakeGit({ "cg-blk": { repo: "/repo/bin" } });
+        const { fs, removed } = memGcFs(["cg-blk"]);
+        const plan = await runGc({
+            fs,
+            git,
+            runsDir: RUNS,
+            runsFs: memRunsFs([record("CG-BLK", "blocked")]),
+            worktreesDir: WORKTREES,
+        });
+        expect(plan.pruned.map((o) => o.name)).toEqual(["cg-blk"]);
+        expect(removed).toEqual([]);
+        expect(calls.some((c) => c.args.includes("remove") || c.args.includes("branch"))).toBe(false);
+    });
+
+    it("never reaps a failed record's worktree", async () => {
+        const { calls, git } = fakeGit({ "cg-fail": { repo: "/repo/bin" } });
+        const { fs, removed } = memGcFs(["cg-fail"]);
+        const plan = await runGc({
+            fs,
+            git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([record("CG-FAIL", "failed")]),
+            worktreesDir: WORKTREES,
+        });
+        expect(plan.pruned).toEqual([]);
+        expect(removed).toEqual([]);
+        expect(calls.some((c) => c.args.includes("remove") || c.args.includes("branch"))).toBe(false);
+    });
+
+    it("never reaps a done or in-progress record's worktree", async () => {
+        const { calls, git } = fakeGit({ "cg-done": { repo: "/repo/bin" }, "cg-prog": { repo: "/repo/bin" } });
+        const { fs, removed } = memGcFs(["cg-done", "cg-prog"]);
+        const plan = await runGc({
+            fs,
+            git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([record("CG-DONE", "done"), record("CG-PROG", "in_progress")]),
+            worktreesDir: WORKTREES,
+        });
+        expect(plan.pruned).toEqual([]);
+        expect(removed).toEqual([]);
+        expect(calls.some((c) => c.args.includes("remove") || c.args.includes("branch"))).toBe(false);
+    });
+
+    it("holds a too-new blocked worktree out of removal via --older-than", async () => {
+        const nowMs = Date.parse("2026-06-16T00:00:00.000Z");
+        const { calls, git } = fakeGit({ "cg-blk-new": { repo: "/repo/bin" }, "cg-blk-old": { repo: "/repo/bin" } });
+        const { fs } = memGcFs(["cg-blk-new", "cg-blk-old"], {
+            "cg-blk-new": nowMs - 1 * 86_400_000,
+            "cg-blk-old": nowMs - 30 * 86_400_000,
+        });
+        const plan = await runGc({
+            clock: fixedClock,
+            fs,
+            git,
+            olderThanDays: 7,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([record("CG-BLK-NEW", "blocked"), record("CG-BLK-OLD", "blocked")]),
+            worktreesDir: WORKTREES,
+        });
+        expect(plan.pruned.map((o) => o.name)).toEqual(["cg-blk-old"]);
+        expect(plan.skippedByAge.map((o) => o.name)).toEqual(["cg-blk-new"]);
+        const removeCalls = calls.filter((c) => c.args.includes("remove"));
+        expect(removeCalls).toHaveLength(1);
+        expect(removeCalls[0]?.args).toContain("/wt/cg-blk-old");
+        const branchCalls = calls.filter((c) => c.args.includes("branch"));
+        expect(branchCalls).toHaveLength(1);
+        expect(branchCalls[0]?.args).toContain("beflow/cg-blk-old");
     });
 });

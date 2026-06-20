@@ -7,7 +7,6 @@ import type { Project } from "../src/config/schema.ts";
 
 const existingProject: Project = {
     default_repo: "api",
-    defaults: undefined,
     module_repo_map: { GUI: "api" },
     name: "My App",
     plane_project_id: "00000000-0000-4000-8000-000000000003",
@@ -18,7 +17,8 @@ const existingProject: Project = {
 const fixtureConfig = `${JSON.stringify(
     {
         $schema: "./config.schema.json",
-        defaults: { agent: "claude", runMode: "supervised" },
+        agent: "claude",
+        runMode: "supervised",
         projects: { CG: existingProject },
         tracker: "plane",
         trackers: {
@@ -32,7 +32,6 @@ const fixtureConfig = `${JSON.stringify(
 
 const newProject: Project = {
     default_repo: "beflow",
-    defaults: undefined,
     module_repo_map: { Core: "beflow" },
     name: "beflow",
     plane_project_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -114,7 +113,8 @@ describe("addProject", () => {
     it("throws from fileSchema.parse when the config is invalid after merge", () => {
         const invalidFixture = `${JSON.stringify(
             {
-                defaults: { agent: "claude", runMode: "supervised" },
+                agent: "claude",
+                runMode: "supervised",
                 projects: { CG: existingProject },
                 tracker: "not-a-valid-tracker",
                 trackers: {},

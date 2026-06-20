@@ -5,7 +5,7 @@ import type { RunRecord } from "./runstore.ts";
 // Project-over-default-over-false resolution of the per-project telemetry-in-comment
 // Toggle. Returns false when neither layer opts in.
 export function resolveTelemetryInComment(config: Config, registry: Registry, projectKey: string): boolean {
-    return registry.projects[projectKey]?.telemetry?.inComment ?? config.defaults.telemetry?.inComment ?? false;
+    return registry.projects[projectKey]?.telemetry?.inComment ?? config.telemetry?.inComment ?? false;
 }
 
 // The token count beflow reports: prefer an explicit total, else derive it from

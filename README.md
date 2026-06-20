@@ -1,7 +1,7 @@
 # beflow
 
-**An AI-agent orchestration CLI that drives your issue tracker's backlog to
-shipped PRs.**
+**An AI-agent orchestration CLI for governed autonomy — drives your backlog to
+shipped PRs, with a policy gate on every change.**
 
 [![npm](https://img.shields.io/npm/v/beflow?style=flat-square)](https://www.npmjs.com/package/beflow) [![CI](https://img.shields.io/github/actions/workflow/status/corrm/beflow/ci.yml?branch=main&style=flat-square)](https://github.com/corrm/beflow/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/github/license/corrm/beflow?style=flat-square)](https://github.com/corrm/beflow/blob/main/LICENSE)
 
@@ -11,6 +11,11 @@ beflow turns work items on a project board ([Plane](https://plane.so) or
 [Linear](https://linear.app)) into agent-driven pull requests. You stay the
 captain — decide, review, merge; beflow runs the crew — investigate, spec,
 build, open PRs — and keeps the board in sync.
+
+beflow **owns the PR**: every agent-built change runs a policy gate
+(AGENTOWNERS-style, most-restrictive-wins) *before* it's ever review-ready —
+`block`, `require_approval`, or `allow` — so you can run agents autonomously on
+real repos without handing them unsupervised write access to `main`.
 
 ⭐ If beflow is useful to you, please [star the repo](https://github.com/corrm/beflow) — it helps others find it.
 

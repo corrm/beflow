@@ -13,7 +13,7 @@ captain — decide, review, merge; beflow runs the crew — investigate, spec,
 build, open PRs — and keeps the board in sync.
 
 beflow **owns the PR**: every agent-built change runs a policy gate
-(AGENTOWNERS-style, most-restrictive-wins) *before* it's ever review-ready —
+(AGENTOWNERS-style, most-restrictive-wins) _before_ it's ever review-ready —
 `block`, `require_approval`, or `allow` — so you can run agents autonomously on
 real repos without handing them unsupervised write access to `main`.
 
@@ -23,6 +23,12 @@ The agent is **tracker-blind**. All tracker I/O happens at the boundaries of a
 run: beflow resolves a task + a repo + a contract, hands them to a coding-agent
 CLI, and writes the structured result back to the board. The agent never knows
 which tracker it's serving, so the same agent works across Plane and Linear.
+
+> **Why tracker-blind matters:** the agent never couples to a specific board.
+> Swap Plane for Linear, run several trackers at once, or restructure your boards
+> — your agents, prompts, and contracts don't change. The tracker is an adapter,
+> not a dependency. Governance lives at that same boundary: the policy gate sees
+> the diff and the decision, never the tracker.
 
 ```mermaid
 flowchart LR

@@ -135,8 +135,10 @@ Applies globally unless a project-level `policy` block overrides it wholesale.
 
 #### `policy.rules[]`
 
-Each rule is matched in order; the first match wins. A rule with no `paths` or
-`agent` filter matches everything and acts as a default.
+All matching rules are collected and the most restrictive decision wins
+(`block` > `require_approval` > `allow`), so rule order does not matter. A rule
+with no `paths` or `agent` filter matches everything and acts as a catch-all
+default.
 
 | Field      | Type                                           | Description                                                  |
 | ---------- | ---------------------------------------------- | ------------------------------------------------------------ |

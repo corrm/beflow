@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { Project, Registry } from "../src/config/schema.ts";
+import type { RunStoreFs } from "../src/core/runstore.ts";
 import type { AskProjectSpec } from "../src/core/setup.ts";
 import { setupProject } from "../src/core/setup.ts";
 import type { Issue, IssueMeta } from "../src/model/types.ts";
@@ -20,6 +21,21 @@ import type {
     ResolveModuleChanges,
     Tracker,
 } from "../src/trackers/tracker.ts";
+
+function memScaffoldFs(seed: Record<string, string> = {}): RunStoreFs & { files: Map<string, string> } {
+    const files = new Map<string, string>(Object.entries(seed));
+    return {
+        files,
+        list: () => [],
+        read: (p) => files.get(p) ?? null,
+        remove: (p) => {
+            files.delete(p);
+        },
+        write: (p, d) => {
+            files.set(p, d);
+        },
+    };
+}
 
 const registry: Registry = {
     projects: {
@@ -113,7 +129,13 @@ describe("setupProject", () => {
             updated: [],
             warnings: [],
         });
-        const result = await setupProject("CG", { agents: ["claude"], registry, tracker, trackerName: "plane" });
+        const result = await setupProject("CG", {
+            agents: ["claude"],
+            registry,
+            scaffoldFs: memScaffoldFs(),
+            tracker,
+            trackerName: "plane",
+        });
 
         expect(tracker.ensureBoardCalls).toHaveLength(1);
         const call = tracker.ensureBoardCalls[0]!;
@@ -139,6 +161,7 @@ describe("setupProject", () => {
                 lines.push(m);
             },
             registry,
+            scaffoldFs: memScaffoldFs(),
             tracker,
             trackerName: "plane",
         });
@@ -166,6 +189,7 @@ describe("setupProject", () => {
             },
             prune: false,
             registry,
+            scaffoldFs: memScaffoldFs(),
             tracker,
             trackerName: "plane",
         });
@@ -193,6 +217,7 @@ describe("setupProject", () => {
             },
             prune: true,
             registry,
+            scaffoldFs: memScaffoldFs(),
             tracker,
             trackerName: "plane",
         });
@@ -234,6 +259,7 @@ describe("setupProject", () => {
                 persistCalls.push({ dir, key, project });
             },
             registry: localRegistry,
+            scaffoldFs: memScaffoldFs(),
             tracker,
             trackerName: "plane",
         });
@@ -301,6 +327,7 @@ describe("setupProject", () => {
                 persistCalls.push(true);
             },
             registry,
+            scaffoldFs: memScaffoldFs(),
             tracker,
             trackerName: "plane",
         });
@@ -309,6 +336,60 @@ describe("setupProject", () => {
         expect(persistCalls).toHaveLength(0);
         expect(tracker.ensureBoardCalls).toHaveLength(1);
         expect(tracker.ensureBoardCalls[0]!.project).toBe("CG");
+    });
+
+    it("scaffolds the control-plane AGENTOWNERS into each repo and instructs activation", async () => {
+        const tracker = new RecordingTracker({
+            created: [],
+            orphans: [],
+            pruned: [],
+            skipped: [],
+            updated: [],
+            warnings: [],
+        });
+        const scaffoldFs = memScaffoldFs();
+        const lines: string[] = [];
+        await setupProject("CG", {
+            agents: ["claude"],
+            log: (m) => {
+                lines.push(m);
+            },
+            registry,
+            scaffoldFs,
+            tracker,
+            trackerName: "plane",
+        });
+
+        expect(scaffoldFs.files.get("/repo/bin/.github/AGENTOWNERS")).toContain("tests/** require_approval");
+        expect(lines.some((l) => l.includes("wrote recommended control-plane AGENTOWNERS"))).toBe(true);
+        expect(lines.some((l) => l.includes('policy.evaluator = "agentowners"'))).toBe(true);
+    });
+
+    it("leaves an existing AGENTOWNERS untouched and skips the activation hint", async () => {
+        const tracker = new RecordingTracker({
+            created: [],
+            orphans: [],
+            pruned: [],
+            skipped: [],
+            updated: [],
+            warnings: [],
+        });
+        const scaffoldFs = memScaffoldFs({ "/repo/bin/.github/AGENTOWNERS": "src/** block\n" });
+        const lines: string[] = [];
+        await setupProject("CG", {
+            agents: ["claude"],
+            log: (m) => {
+                lines.push(m);
+            },
+            registry,
+            scaffoldFs,
+            tracker,
+            trackerName: "plane",
+        });
+
+        expect(scaffoldFs.files.get("/repo/bin/.github/AGENTOWNERS")).toBe("src/** block\n");
+        expect(lines.some((l) => l.includes("already present") && l.includes("left untouched"))).toBe(true);
+        expect(lines.some((l) => l.includes('policy.evaluator = "agentowners"'))).toBe(false);
     });
 
     it("forwards an injected resolveModuleChanges into ensureBoard opts", async () => {
@@ -325,6 +406,7 @@ describe("setupProject", () => {
             agents: [],
             registry,
             resolveModuleChanges: resolver,
+            scaffoldFs: memScaffoldFs(),
             tracker: t,
             trackerName: "plane",
         });

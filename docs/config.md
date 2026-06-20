@@ -150,6 +150,12 @@ With the above, a work item filed under the **Backend** module runs in `api`, a
 with no module (or one not in the map) falls back to `default_repo` (`api`).
 Override per run with `beflow run <KEY>-42 --repo web`.
 
+`beflow setup <PROJECT>` also scaffolds a recommended control-plane
+`.github/AGENTOWNERS` into each of these `repos` paths (existing files are left
+untouched). See the
+[recommended default](pr-ownership-and-policy.md#recommended-default-control-plane-by-default)
+for the content and how to activate it.
+
 ## Agents
 
 Each entry defines how to launch one coding-agent CLI.

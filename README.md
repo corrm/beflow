@@ -12,6 +12,8 @@ beflow turns work items on a project board ([Plane](https://plane.so) or
 captain — decide, review, merge; beflow runs the crew — investigate, spec,
 build, open PRs — and keeps the board in sync.
 
+⭐ If beflow is useful to you, please [star the repo](https://github.com/corrm/beflow) — it helps others find it.
+
 The agent is **tracker-blind**. All tracker I/O happens at the boundaries of a
 run: beflow resolves a task + a repo + a contract, hands them to a coding-agent
 CLI, and writes the structured result back to the board. The agent never knows
@@ -117,7 +119,7 @@ flowchart TD
   draft --> qg{"quality gate"}
   qg -- RED after rework --> failkeep2["failed (keep draft PR)"]
   qg -- green --> pol{"post-run policy"}
-  pol -- block --> blk["close PR + delete branch<br/>→ Needs Input"]
+  pol -- block --> blk["close PR, keep branch<br/>→ Needs Input"]
   pol -- require_approval --> appr["enrich body, leave DRAFT<br/>→ In Review + awaits-approval note"]
   pol -- allow --> al["enrich body + mark ready<br/>→ In Review"]
 ```
@@ -199,6 +201,10 @@ never in `~/beflow/config.json`.
 - [Adapters](docs/adapters.md) — writing a tracker adapter
 - [MCP](docs/mcp.md) — per-run MCP servers
 - [ACP events](docs/acp-events.md) — the agent event stream beflow consumes
+
+## Star the repo
+
+⭐ If beflow helps you ship, please [star it on GitHub](https://github.com/corrm/beflow) — it's the easiest way to support the project and help others discover it.
 
 ## License
 

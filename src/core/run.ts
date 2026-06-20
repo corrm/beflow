@@ -19,11 +19,11 @@ import { escalationDetail, notifyEscalation } from "./notify.ts";
 import type { Notifier } from "./notify.ts";
 import { computeChangedFiles, defaultPolicyExec, evaluatePolicy } from "./policy.ts";
 import type { PolicyExec, PolicyResult } from "./policy.ts";
-import { closePrAndDeleteBranch, detectBaseBranch, editPr, hasCommits, markReady, openDraftPr } from "./pr.ts";
+import { closePr, detectBaseBranch, editPr, hasCommits, markReady, openDraftPr } from "./pr.ts";
 import type { PrRef } from "./pr.ts";
 import type { PromptSet } from "./prompts.ts";
 import { renderContract, renderLinkedContext, renderTask } from "./prompts.ts";
-import { defaultGateExec, resolveQualityGate, runQualityGate } from "./qualitygate.ts";
+import { defaultGateExec, resolveMaxRework, resolveQualityGate, runQualityGate } from "./qualitygate.ts";
 import type { GateExec } from "./qualitygate.ts";
 import { deleteRecord, loadRecord, resolveRunsDir, saveRecord, systemClock } from "./runstore.ts";
 import type { Clock, RunRecord, RunStoreFs } from "./runstore.ts";
@@ -639,127 +639,156 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
 
     // QUALITY GATE (opt-in, autonomous-only): before an implement `done` report is
     // Allowed to open a PR / advance to In Review, run the project check command(s) in
-    // The worktree. On RED, re-prompt the SAME live agent session once with the failing
-    // Output; re-check. Still red (or the rework didn't re-emit `done`) → treat as failed.
+    // The worktree. On RED, re-prompt the SAME live agent session up to `maxRework`
+    // Times (default 1; 0 disables auto-rework) with the failing output, re-checking
+    // After each. Still red (or a rework didn't re-emit `done`) → treat as failed.
     const gateCommands = resolveQualityGate(deps.config, deps.registry, projectKeyOf(key));
+    const maxRework = resolveMaxRework(deps.config, deps.registry, projectKeyOf(key));
     if (effectiveJobKind === "implement" && result.report?.status === "done" && gateCommands.length > 0) {
         const gateExec = deps.gateExec ?? defaultGateExec;
-        let gate: { output: string; passed: boolean } | undefined;
-        try {
-            gate = await runQualityGate(gateCommands, cwd, gateExec);
-        } catch (err) {
-            // (b) The gate RUNNER itself threw (couldn't run the command) — fail OPEN:
-            // The gate is an enhancement, not a correctness oracle. Log and proceed as done.
-            log(
-                `beflow: ${key} quality gate could not run: ${err instanceof Error ? err.message : String(err)}; proceeding as done`,
-            );
-        }
-        if (gate !== undefined && !gate.passed) {
-            // (a) The gate RAN and returned RED — enforce. Auto-rework once against the
-            // Same session, injecting the failing output as a continuation, then re-check.
-            log(`beflow: ${key} quality gate failed; auto-reworking once`);
-            const gateComment: Comment = {
-                body: `The quality gate failed. Fix these and re-emit the report block:\n${gate.output}`,
-                createdAt: clock(),
-                id: "quality-gate",
-                isBot: false,
-            };
-            const reworkTask = renderContinuation(
-                deps.prompts,
-                {
-                    newComments: [gateComment],
-                    ...(result.report.prUrl !== undefined ? { prUrl: result.report.prUrl } : {}),
-                    priorReport: result.report,
-                },
-                beflowOwned,
-            );
-            const reworked = await deps.driver.run(buildRunOptions(reworkTask), (evt) => {
-                log(`acpx: ${JSON.stringify(evt)}`);
-            });
-            // The rework re-prompt can take minutes; re-assert the human-authoritative
-            // Yield check (as after the initial dispatch) so a card pulled out of the
-            // Started group during rework is not clobbered by applyReport below.
-            const reworkYielded = await yieldToManualMove({
-                cleanup:
-                    (worktreeCreated || isResume) && git !== undefined
-                        ? async (): Promise<void> => {
-                              await removeWorktree(effectiveRepoPath, cwd, git);
-                          }
-                        : undefined,
-                issue,
-                key,
-                log,
-                report: reworked.report,
-                runsDir,
-                runsFs: deps.runsFs,
-                tracker: deps.tracker,
-            });
-            if (reworkYielded) {
-                return { applied: undefined, cwd, issue, resolved, result: reworked };
+
+        // Run the gate; a runner that THROWS fails OPEN (returns undefined): the gate is
+        // An enhancement, not a correctness oracle, so an unrunnable gate proceeds as done.
+        async function runGate(phase: string): Promise<{ output: string; passed: boolean } | undefined> {
+            try {
+                return await runQualityGate(gateCommands, cwd, gateExec);
+            } catch (err) {
+                log(
+                    `beflow: ${key} quality gate could not run${phase}: ${err instanceof Error ? err.message : String(err)}; proceeding as done`,
+                );
+                return undefined;
             }
-            let reworkGate: { output: string; passed: boolean } | undefined;
-            if (reworked.report?.status === "done") {
-                try {
-                    reworkGate = await runQualityGate(gateCommands, cwd, gateExec);
-                } catch (err) {
-                    log(
-                        `beflow: ${key} quality gate could not run on rework: ${err instanceof Error ? err.message : String(err)}; proceeding as done`,
-                    );
+        }
+
+        // Park the run as FAILED after the gate exhausted its reworks (or rework was
+        // Disabled). Increments the unified attempt counter (not reset) so repeated gate
+        // Failures across dispatches accumulate toward the quarantine threshold.
+        async function parkGateFailed(failingOutput: string, lastResult: AgentRunResult): Promise<RunResult> {
+            const reworked = maxRework > 0;
+            const failedReport: Report = {
+                status: "failed",
+                summary: `Quality gate failed${reworked ? " after auto-rework" : ""}:\n${failingOutput}`,
+            };
+            const failedUsage = lastResult.stream.usage;
+            const failedTelemetry =
+                telemetryEnabled && failedUsage !== undefined
+                    ? formatTelemetryLine(failedUsage, telemetryModel, record.attempts)
+                    : undefined;
+            const failedApplied = await applyReport(
+                deps.tracker,
+                issue,
+                failedReport,
+                effectiveJobKind,
+                failedTelemetry,
+            );
+            saveRecord(
+                runsDir,
+                {
+                    ...record,
+                    attempts: (record.attempts ?? 0) + 1,
+                    report: failedReport,
+                    status: "failed",
+                    updatedAt: clock(),
+                    ...(failedUsage !== undefined ? { usage: failedUsage } : {}),
+                },
+                deps.runsFs,
+            );
+            await notifyEscalation(deps.notify, issue, "failed", escalationDetail(failedReport));
+            log(
+                reworked
+                    ? `beflow: ${key} quality gate still failing after auto-rework; parked as failed`
+                    : `beflow: ${key} quality gate failed; parked as failed`,
+            );
+            return { applied: failedApplied, cwd, issue, resolved, result: lastResult };
+        }
+
+        const gate = await runGate("");
+        if (gate !== undefined && !gate.passed) {
+            if (maxRework === 0) {
+                // Auto-rework disabled — park immediately on the first RED.
+                return await parkGateFailed(gate.output, result);
+            }
+            // The gate RAN and returned RED — auto-rework against the same session up to
+            // `maxRework` times, injecting the latest failing output as a continuation and
+            // Re-checking after each attempt. The latest failing output is preferred when
+            // The run finally gives up, falling back to the original gate output.
+            let failingOutput = gate.output;
+            let lastResult = result;
+            let adopted = false;
+            for (let attempt = 1; attempt <= maxRework; attempt += 1) {
+                log(
+                    `beflow: ${key} quality gate failed; auto-reworking (attempt ${String(attempt)}/${String(maxRework)})`,
+                );
+                const gateComment: Comment = {
+                    body: `The quality gate failed. Fix these and re-emit the report block:\n${failingOutput}`,
+                    createdAt: clock(),
+                    id: "quality-gate",
+                    isBot: false,
+                };
+                const reworkTask = renderContinuation(
+                    deps.prompts,
+                    {
+                        newComments: [gateComment],
+                        ...(lastResult.report?.prUrl !== undefined ? { prUrl: lastResult.report.prUrl } : {}),
+                        ...(lastResult.report !== null ? { priorReport: lastResult.report } : {}),
+                    },
+                    beflowOwned,
+                );
+                const reworked = await deps.driver.run(buildRunOptions(reworkTask), (evt) => {
+                    log(`acpx: ${JSON.stringify(evt)}`);
+                });
+                lastResult = reworked;
+                // The rework re-prompt can take minutes; re-assert the human-authoritative
+                // Yield check (as after the initial dispatch) so a card pulled out of the
+                // Started group during rework is not clobbered by applyReport below.
+                const reworkYielded = await yieldToManualMove({
+                    cleanup:
+                        (worktreeCreated || isResume) && git !== undefined
+                            ? async (): Promise<void> => {
+                                  await removeWorktree(effectiveRepoPath, cwd, git);
+                              }
+                            : undefined,
+                    issue,
+                    key,
+                    log,
+                    report: reworked.report,
+                    runsDir,
+                    runsFs: deps.runsFs,
+                    tracker: deps.tracker,
+                });
+                if (reworkYielded) {
+                    return { applied: undefined, cwd, issue, resolved, result: reworked };
+                }
+                const reworkedReport = reworked.report;
+                const reworkGate = reworkedReport?.status === "done" ? await runGate(" on rework") : undefined;
+                if (reworkedReport?.status === "done" && (reworkGate === undefined || reworkGate.passed)) {
+                    // Rework produced a fresh `done` report AND the gate is green (or the
+                    // Re-run threw → fail open) — adopt the new report and fall through. In
+                    // Beflow-owned mode the agent never sets prUrl, so re-stamp the already
+                    // Opened draft PR so the policy + writeback steps still link it.
+                    result =
+                        openedPr !== undefined
+                            ? { ...reworked, report: { ...reworkedReport, prUrl: openedPr.url } }
+                            : reworked;
+                    adopted = true;
+                    break;
+                }
+                if (reworkGate !== undefined && !reworkGate.passed) {
+                    failingOutput = reworkGate.output;
                 }
             }
-            if (reworked.report?.status === "done" && (reworkGate === undefined || reworkGate.passed)) {
-                // Rework produced a fresh `done` report AND the gate is green (or the
-                // Re-run threw → fail open) — adopt the new report and fall through. In
-                // Beflow-owned mode the agent never sets prUrl, so re-stamp the already
-                // Opened draft PR so the policy + writeback steps still link it.
-                result =
-                    openedPr !== undefined
-                        ? { ...reworked, report: { ...reworked.report, prUrl: openedPr.url } }
-                        : reworked;
-            } else {
-                // Still red, or the rework didn't re-emit a `done` report → FAILED. Route
-                // Through applyReport(failed) + escalation, and persist the run record with
-                // The unified attempt counter INCREMENTED (not reset) so repeated gate
-                // Failures across dispatches accumulate toward the quarantine threshold.
-                const failedOutput = reworkGate !== undefined && !reworkGate.passed ? reworkGate.output : gate.output;
-                const failedReport: Report = {
-                    status: "failed",
-                    summary: `Quality gate failed after auto-rework:\n${failedOutput}`,
-                };
-                const failedUsage = reworked.stream.usage;
-                const failedTelemetry =
-                    telemetryEnabled && failedUsage !== undefined
-                        ? formatTelemetryLine(failedUsage, telemetryModel, record.attempts)
-                        : undefined;
-                const failedApplied = await applyReport(
-                    deps.tracker,
-                    issue,
-                    failedReport,
-                    effectiveJobKind,
-                    failedTelemetry,
-                );
-                saveRecord(
-                    runsDir,
-                    {
-                        ...record,
-                        attempts: (record.attempts ?? 0) + 1,
-                        report: failedReport,
-                        status: "failed",
-                        updatedAt: clock(),
-                        ...(failedUsage !== undefined ? { usage: failedUsage } : {}),
-                    },
-                    deps.runsFs,
-                );
-                await notifyEscalation(deps.notify, issue, "failed", escalationDetail(failedReport));
-                log(`beflow: ${key} quality gate still failing after auto-rework; parked as failed`);
-                return { applied: failedApplied, cwd, issue, resolved, result: reworked };
+            if (!adopted) {
+                // Still red, or no rework re-emitted a `done` report, after the last
+                // Allowed attempt → FAILED.
+                return await parkGateFailed(failingOutput, lastResult);
             }
         }
     }
 
     // BEFLOW-OWNED PR — STEP 4 (after a green gate): evaluate the post-run policy over
-    // The run's diff and decide the draft PR's fate. `block` closes the PR + branch and
-    // Routes the issue to the blocked/Needs-Input path (NOT In Review); `require_approval`
+    // The run's diff and decide the draft PR's fate. `block` closes the PR (keeping the
+    // Branch for review/forensics) and routes the issue to the blocked/Needs-Input path
+    // (NOT In Review); `require_approval`
     // Enriches the body but leaves the PR draft as the review artifact; `allow` enriches
     // And marks it ready. Any thrown PR/policy-layer error parks the run as failed while
     // Keeping the worktree + draft PR (retryable). Decided here so the shared writeback
@@ -794,7 +823,7 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
 
         if (decision.decision === "block") {
             try {
-                await closePrAndDeleteBranch(openedPr, resolved.repo, branch, cwd, prExec);
+                await closePr(openedPr, resolved.repo, prExec);
             } catch (err) {
                 log(
                     `beflow: ${key} — closing the blocked PR failed (${err instanceof Error ? err.message : String(err)}); parking as failed`,
@@ -827,7 +856,7 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                 deps.runsFs,
             );
             await notifyEscalation(deps.notify, issue, "blocked", escalationDetail(blockedReport));
-            log(`beflow: ${key} — policy blocked; closed PR + branch and routed to Needs Input`);
+            log(`beflow: ${key} — policy blocked; closed PR (branch kept) and routed to Needs Input`);
             return { applied: blockedApplied, cwd, issue, resolved, result };
         }
 

@@ -150,20 +150,13 @@ export async function editPr(
 }
 
 /**
- * Close a PR and delete its head branch. Idempotent: an already-closed PR or an
- * already-gone branch is tolerated; the local branch is best-effort deleted too.
+ * Close a PR while KEEPING its head branch. The branch is preserved so a blocked
+ * change stays available for review and forensics. Idempotent: an already-closed
+ * PR is tolerated.
  */
-export async function closePrAndDeleteBranch(
-    pr: PrRef | number | string,
-    repo: string,
-    branch: string,
-    cwd: string,
-    exec: Exec,
-): Promise<void> {
-    const closed = await exec("gh", ["pr", "close", prSelector(pr), "--repo", repo, "--delete-branch"]);
+export async function closePr(pr: PrRef | number | string, repo: string, exec: Exec): Promise<void> {
+    const closed = await exec("gh", ["pr", "close", prSelector(pr), "--repo", repo]);
     if (closed.code !== 0 && !ALREADY_CLOSED.test(closed.stderr)) {
         throw new Error(`beflow: gh pr close failed (exit ${String(closed.code)}): ${closed.stderr.trim()}`);
     }
-    // Best-effort local branch cleanup: a missing branch is the desired end state.
-    await exec("git", ["-C", cwd, "branch", "-D", branch]);
 }

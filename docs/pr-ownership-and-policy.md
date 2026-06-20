@@ -66,9 +66,10 @@ these steps:
    artifact for the rest of the pipeline.
 
 7. **Quality gate** — if `qualityGate.commands` are configured, they run in the
-   worktree. On RED, the agent is re-prompted once with the failing output. If
-   it is still RED after rework, the run is parked as **failed** (the draft PR
-   is kept).
+   worktree. On RED, the agent is re-prompted with the failing output up to
+   `qualityGate.maxRework` times (default 1; `0` disables auto-rework), re-checking
+   after each. If it is still RED once the rework budget is exhausted, the run is
+   parked as **failed** (the draft PR is kept).
 
 8. **Post-run policy** — beflow evaluates the configured policy over the diff
    and decides the PR's fate (see [Policy outcomes](#policy-outcomes) below).
@@ -84,7 +85,7 @@ these steps:
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `allow`            | Enriches the PR body with the agent's summary, marks the PR **ready for review**, and moves the issue to **In Review**.                                              |
 | `require_approval` | Enriches the PR body, leaves the PR as a **draft**, moves the issue to **In Review**, and posts an awaits-approval note asking a human to approve and mark it ready. |
-| `block`            | Closes the PR and deletes the branch, then routes the issue to **Needs Input** with a comment explaining the block reason.                                           |
+| `block`            | Closes the PR (keeping the branch for review and forensics), then routes the issue to **Needs Input** with a comment explaining the block reason.                    |
 
 A `block` or `require_approval` decision is pre-PR governance: it runs before
 the PR is visible to reviewers. It complements (and does not replace) GitHub

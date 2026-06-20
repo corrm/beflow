@@ -103,6 +103,10 @@
               "items": {
                 "type": "string"
               }
+            },
+            "maxRework": {
+              "type": "integer",
+              "minimum": 0
             }
           },
           "additionalProperties": false
@@ -402,6 +406,10 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "maxRework": {
+                    "type": "integer",
+                    "minimum": 0
                   }
                 },
                 "additionalProperties": false

@@ -67,7 +67,9 @@ export const projectSchema = z.object({
     plane_project_id: z.string().optional(),
     policy: policySchema,
     pr: prSchema,
-    qualityGate: z.object({ commands: z.array(z.string()).optional() }).optional(),
+    qualityGate: z
+        .object({ commands: z.array(z.string()).optional(), maxRework: z.number().int().min(0).optional() })
+        .optional(),
     repos: z.record(z.string(), z.string()),
     review: z.object({ enabled: z.boolean().optional(), postToPr: z.boolean().optional() }).optional(),
     root: z.string(),
@@ -150,9 +152,12 @@ export const fileSchema = z.object({
     pr: prSchema,
     // Opt-in quality gate: project check command(s) run in the worktree before an
     // Implement `done` report opens a PR / advances to In Review. On RED beflow
-    // Auto-reworks the live agent session once, then re-checks; still-red is failed.
+    // Auto-reworks the live agent session up to `maxRework` times (default 1; 0
+    // Disables auto-rework), re-checking after each; still-red is failed.
     // Per-project `projects.<KEY>.qualityGate` overrides this global.
-    qualityGate: z.object({ commands: z.array(z.string()).optional() }).optional(),
+    qualityGate: z
+        .object({ commands: z.array(z.string()).optional(), maxRework: z.number().int().min(0).optional() })
+        .optional(),
     // Opt-in PR review assist. When `enabled`, watch dispatches a reviewer agent over
     // In-Review items and posts its findings as an issue comment; `postToPr` also posts
     // Them on the PR. Per-project `projects.<KEY>.review` overrides this global.

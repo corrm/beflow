@@ -1852,6 +1852,136 @@ describe("runIssue", () => {
             expect(seen).toHaveLength(1);
             expect(result.applied).toEqual({ movedTo: "In Review" });
         });
+
+        // A registry whose CG project opts into the gate AND a rework budget.
+        function reworkRegistry(commands: string[], maxRework: number): Registry {
+            return {
+                ...registry,
+                projects: {
+                    ...registry.projects,
+                    CG: { ...registry.projects.CG!, qualityGate: { commands, maxRework } },
+                },
+            };
+        }
+
+        it("maxRework 0: a red gate parks failed WITHOUT dispatching any rework", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const { fs, store } = memRunsFs();
+            const { driver, seen } = scriptedDriver([{ prUrl: "http://pr/1", status: "done", summary: "first" }]);
+            const { exec, calls } = scriptedGate([{ exitCode: 1, output: "FAIL: red" }]);
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({ driver, gateExec: exec, registry: reworkRegistry(["bun test"], 0), runsFs: fs, tracker }),
+            );
+
+            // Only the initial dispatch ran; no rework was attempted.
+            expect(seen).toHaveLength(1);
+            // The gate ran once and never re-ran.
+            expect(calls).toHaveLength(1);
+            // Parked failed, no advance to In Review.
+            expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "Needs Input")).toBe(true);
+            expect(tracker.calls.some((c) => c.kind === "addProperty" && c.label === "failed")).toBe(true);
+            expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "In Review")).toBe(false);
+            expect(onlyRecord(store)?.status).toBe("failed");
+            expect(result.result.report?.summary).toBe("first");
+        });
+
+        it("maxRework 1: red → one rework → green is adopted (driver runs twice, In Review)", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const { driver, seen } = scriptedDriver([
+                { prUrl: "http://pr/1", status: "done", summary: "first" },
+                { prUrl: "http://pr/1", status: "done", summary: "fixed" },
+            ]);
+            const { exec } = scriptedGate([
+                { exitCode: 1, output: "FAIL: 1 test failing" },
+                { exitCode: 0, output: "ok" },
+            ]);
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({ driver, gateExec: exec, registry: reworkRegistry(["bun test"], 1), tracker }),
+            );
+
+            expect(seen).toHaveLength(2);
+            expect(seen[1]!.task).toContain("FAIL: 1 test failing");
+            expect(result.applied).toEqual({ movedTo: "In Review" });
+        });
+
+        it("maxRework 1: red → one rework → still red parks failed (no second rework)", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const { fs, store } = memRunsFs();
+            const { driver, seen } = scriptedDriver([
+                { prUrl: "http://pr/1", status: "done", summary: "first" },
+                { prUrl: "http://pr/1", status: "done", summary: "still broken" },
+            ]);
+            const { exec } = scriptedGate([{ exitCode: 1, output: "FAIL: still red" }]);
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({ driver, gateExec: exec, registry: reworkRegistry(["bun test"], 1), runsFs: fs, tracker }),
+            );
+
+            // One rework only; budget of 1 is not exceeded.
+            expect(seen).toHaveLength(2);
+            expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "Needs Input")).toBe(true);
+            expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "In Review")).toBe(false);
+            expect(onlyRecord(store)?.status).toBe("failed");
+            expect(result.result.report?.summary).toBe("still broken");
+        });
+
+        it("maxRework 2: red, red, then a third dispatch is NOT attempted (parks failed after 2 reworks)", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const { fs, store } = memRunsFs();
+            const { driver, seen } = scriptedDriver([
+                { prUrl: "http://pr/1", status: "done", summary: "first" },
+                { prUrl: "http://pr/1", status: "done", summary: "second" },
+                { prUrl: "http://pr/1", status: "done", summary: "third" },
+            ]);
+            const { exec } = scriptedGate([{ exitCode: 1, output: "FAIL: persistently red" }]);
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({ driver, gateExec: exec, registry: reworkRegistry(["bun test"], 2), runsFs: fs, tracker }),
+            );
+
+            // Initial + exactly 2 reworks = 3 dispatches; no fourth.
+            expect(seen).toHaveLength(3);
+            expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "Needs Input")).toBe(true);
+            expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "In Review")).toBe(false);
+            expect(onlyRecord(store)?.status).toBe("failed");
+            // Each rework re-prompt carried the latest failing gate output.
+            expect(seen[1]!.task).toContain("FAIL: persistently red");
+            expect(seen[2]!.task).toContain("FAIL: persistently red");
+            expect(result.result.report?.summary).toBe("third");
+        });
+
+        it("maxRework 2: red, then the SECOND rework goes green and is adopted (In Review)", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const { driver, seen } = scriptedDriver([
+                { prUrl: "http://pr/1", status: "done", summary: "first" },
+                { prUrl: "http://pr/1", status: "done", summary: "second" },
+                { prUrl: "http://pr/1", status: "done", summary: "third-fixed" },
+            ]);
+            // Initial red, first rework still red, second rework green.
+            const { exec } = scriptedGate([
+                { exitCode: 1, output: "FAIL: red 1" },
+                { exitCode: 1, output: "FAIL: red 2" },
+                { exitCode: 0, output: "ok" },
+            ]);
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({ driver, gateExec: exec, registry: reworkRegistry(["bun test"], 2), tracker }),
+            );
+
+            // Two reworks (3 dispatches), then green adopted → In Review.
+            expect(seen).toHaveLength(3);
+            // The second rework re-prompt carried the first rework's failing output.
+            expect(seen[2]!.task).toContain("FAIL: red 2");
+            expect(result.applied).toEqual({ movedTo: "In Review" });
+            expect(result.result.report?.summary).toBe("third-fixed");
+        });
     });
 
     describe("beflow-owned PR", () => {
@@ -1975,7 +2105,7 @@ describe("runIssue", () => {
             );
         });
 
-        it("block policy: closes the PR + branch, comments the reason, routes to Needs Input (NOT In Review)", async () => {
+        it("block policy: closes the PR but KEEPS the branch, comments the reason, routes to Needs Input (NOT In Review)", async () => {
             const tracker = new FakeTracker(implementIssue());
             const { driver } = fakeDriver({ status: "done", summary: "shipped" });
             const { git } = fakeGit();
@@ -1997,8 +2127,11 @@ describe("runIssue", () => {
                 }),
             );
 
-            expect(prCalls.some((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "close")).toBe(true);
-            expect(prCalls.some((c) => c[0] === "git" && c.includes("-D"))).toBe(true);
+            // The PR is closed WITHOUT --delete-branch, and the branch is never deleted locally.
+            const closeCall = prCalls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "close");
+            expect(closeCall).toBeDefined();
+            expect(closeCall).not.toContain("--delete-branch");
+            expect(prCalls.some((c) => c[0] === "git" && c.includes("-D"))).toBe(false);
             expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "In Review")).toBe(false);
             expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "Needs Input")).toBe(true);
             expect(tracker.calls.some((c) => c.kind === "addProperty" && c.label === "blocked")).toBe(true);

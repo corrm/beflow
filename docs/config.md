@@ -51,18 +51,18 @@ These top-level keys set the defaults a run resolves against; every project may
 override any of them under `projects.<KEY>.<same-key>`. `agent` and `runMode` are
 the two required ones (listed in [Top level](#top-level)); the rest are optional.
 
-| Key             | Required | Description                                                                                                                              |
-| --------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `assignee`      | no       | Tracker user id; beflow assigns the item to this user when it picks it up.                                                               |
-| `onManualMove`  | no       | `yield` (default) lets a live run finish but skips writeback if a human moved the card; `abort` also cancels the agent.                  |
-| `linkedContext` | no       | Inline parent-epic + attachment context into the agent task. Default on.                                                                 |
-| `deadLetter`    | no       | `{ maxAttempts }` — failed attempts (crash-resume + CI-rework combined) before an item is quarantined to **Needs Input**. Default 3.     |
-| `inputQuality`  | no       | `{ minBodyChars }` — a fresh autonomous dispatch of a too-thin issue is parked to **Needs Input** instead of running. Off when 0/absent. |
-| `qualityGate`   | no       | `{ commands }` — check command(s) run in the worktree before an implement `done` opens a PR. On red, beflow reworks once, then fails.    |
-| `review`        | no       | `{ enabled, postToPr }` — opt-in PR review assist in `watch`.                                                                            |
-| `routing`       | no       | `{ triage, spec, implement }` — route a job kind to a specific agent name.                                                               |
-| `sla`           | no       | `{ needsInputMinutes, inReviewMinutes }` — re-ping the escalation channel when an item ages past the threshold.                          |
-| `telemetry`     | no       | `{ inComment }` — append a compact token/cost line to the writeback comment. Default off.                                                |
+| Key             | Required | Description                                                                                                                                                                                                                   |
+| --------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `assignee`      | no       | Tracker user id; beflow assigns the item to this user when it picks it up.                                                                                                                                                    |
+| `onManualMove`  | no       | `yield` (default) lets a live run finish but skips writeback if a human moved the card; `abort` also cancels the agent.                                                                                                       |
+| `linkedContext` | no       | Inline parent-epic + attachment context into the agent task. Default on.                                                                                                                                                      |
+| `deadLetter`    | no       | `{ maxAttempts }` — failed attempts (crash-resume + CI-rework combined) before an item is quarantined to **Needs Input**. Default 3.                                                                                          |
+| `inputQuality`  | no       | `{ minBodyChars }` — a fresh autonomous dispatch of a too-thin issue is parked to **Needs Input** instead of running. Off when 0/absent.                                                                                      |
+| `qualityGate`   | no       | `{ commands, maxRework }` — check command(s) run in the worktree before an implement `done` opens a PR. On red, beflow auto-reworks the agent up to `maxRework` times (integer, default 1; `0` = no auto-rework), then fails. |
+| `review`        | no       | `{ enabled, postToPr }` — opt-in PR review assist in `watch`.                                                                                                                                                                 |
+| `routing`       | no       | `{ triage, spec, implement }` — route a job kind to a specific agent name.                                                                                                                                                    |
+| `sla`           | no       | `{ needsInputMinutes, inReviewMinutes }` — re-ping the escalation channel when an item ages past the threshold.                                                                                                               |
+| `telemetry`     | no       | `{ inComment }` — append a compact token/cost line to the writeback comment. Default off.                                                                                                                                     |
 
 ## Projects
 

@@ -25,6 +25,14 @@ export function resolveQualityGate(config: Config, registry: Registry, projectKe
     return projectCommands ?? globalCommands ?? [];
 }
 
+/**
+ * Project-over-global-over-default resolution of how many times the pre-PR gate
+ * auto-reworks the live agent on RED. Defaults to 1; `0` disables auto-rework.
+ */
+export function resolveMaxRework(config: Config, registry: Registry, projectKey: string): number {
+    return registry.projects[projectKey]?.qualityGate?.maxRework ?? config.qualityGate?.maxRework ?? 1;
+}
+
 /** Truncate from the front, keeping the tail (where errors usually surface). */
 function truncate(text: string): string {
     if (text.length <= MAX_OUTPUT_CHARS) {

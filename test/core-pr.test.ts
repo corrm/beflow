@@ -1,13 +1,6 @@
 import { describe, expect, it } from "bun:test";
 
-import {
-    closePrAndDeleteBranch,
-    detectBaseBranch,
-    editPr,
-    hasCommits,
-    markReady,
-    openDraftPr,
-} from "../src/core/pr.ts";
+import { closePr, detectBaseBranch, editPr, hasCommits, markReady, openDraftPr } from "../src/core/pr.ts";
 import type { Exec, ExecResult } from "../src/core/worktree.ts";
 
 interface ExecCall {
@@ -176,39 +169,32 @@ describe("editPr", () => {
     });
 });
 
-describe("closePrAndDeleteBranch", () => {
-    it("closes the PR with --delete-branch then deletes the local branch", async () => {
+describe("closePr", () => {
+    it("closes the PR without --delete-branch and never touches the local branch", async () => {
         const { exec, calls } = recordingExec();
-        await closePrAndDeleteBranch(7, "owner/repo", "beflow/cg-42", "/wt", exec);
+        await closePr(7, "owner/repo", exec);
         expect(calls[0]).toEqual({
-            args: ["pr", "close", "7", "--repo", "owner/repo", "--delete-branch"],
+            args: ["pr", "close", "7", "--repo", "owner/repo"],
             cmd: "gh",
         });
-        expect(calls[1]).toEqual({ args: ["-C", "/wt", "branch", "-D", "beflow/cg-42"], cmd: "git" });
+        expect(calls).toHaveLength(1);
+        expect(calls.some((c) => c.cmd === "git" && c.args.includes("branch"))).toBe(false);
     });
 
-    it("tolerates an already-closed PR (still cleans the local branch)", async () => {
-        const { exec, calls } = recordingExec((cmd, a) => {
+    it("tolerates an already-closed PR without throwing", async () => {
+        const { exec } = recordingExec((cmd, a) => {
             if (cmd === "gh" && a[1] === "close") {
                 return { code: 1, stderr: "Pull request is already closed" };
             }
             return {};
         });
-        expect(closePrAndDeleteBranch(7, "owner/repo", "beflow/cg-42", "/wt", exec)).resolves.toBeUndefined();
-        expect(calls.at(-1)).toEqual({ args: ["-C", "/wt", "branch", "-D", "beflow/cg-42"], cmd: "git" });
-    });
-
-    it("tolerates an already-gone local branch", async () => {
-        const { exec } = recordingExec((cmd) => (cmd === "git" ? { code: 1, stderr: "branch not found" } : {}));
-        expect(closePrAndDeleteBranch(7, "owner/repo", "beflow/cg-42", "/wt", exec)).resolves.toBeUndefined();
+        expect(closePr(7, "owner/repo", exec)).resolves.toBeUndefined();
     });
 
     it("throws on a real gh close failure", async () => {
         const { exec } = recordingExec((cmd, a) =>
             cmd === "gh" && a[1] === "close" ? { code: 1, stderr: "permission denied" } : {},
         );
-        expect(closePrAndDeleteBranch(7, "owner/repo", "beflow/cg-42", "/wt", exec)).rejects.toThrow(
-            /permission denied/,
-        );
+        expect(closePr(7, "owner/repo", exec)).rejects.toThrow(/permission denied/);
     });
 });

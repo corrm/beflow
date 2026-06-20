@@ -265,6 +265,24 @@ function ciRegistry(autoReworkOnRed: boolean): Registry {
     };
 }
 
+function beflowOwnedRegistry(autoReworkOnRed = false): Registry {
+    return {
+        ...registry,
+        projects: {
+            CG: {
+                ...registry.projects.CG!,
+                ...(autoReworkOnRed ? { ci: { autoReworkOnRed } } : {}),
+                pr: { owner: "beflow" },
+            },
+        },
+    };
+}
+
+// The continuation template renders one of two PR instructions; assert on the
+// Marker phrase unique to each so the tests prove which ownership was selected.
+const AGENT_OWNED_MARKER = "UPDATE it — do not open a new one";
+const BEFLOW_OWNED_MARKER = "do NOT run `gh pr create`";
+
 const prompts = loadPromptSet({ configDir: "/cfg", exists: () => false, home: "/home", read: () => "" });
 
 function deps(over: Partial<WatchDeps> & { tracker: Tracker; driver: AgentDriver }): WatchDeps {
@@ -984,6 +1002,49 @@ describe("watchTick", () => {
         expect(tracker.calls.removedLabels).toEqual([{ key: "CG-3", label: "changes-requested" }]);
         expect(seen).toHaveLength(1);
         expect(seen[0]!.task).toContain("please rename the function");
+        // Agent-owned by default: keep telling the agent to manage the PR itself.
+        expect(seen[0]!.task).toContain(AGENT_OWNED_MARKER);
+        expect(seen[0]!.task).not.toContain(BEFLOW_OWNED_MARKER);
+    });
+
+    it("rework: a beflow-owned implement item gets the beflow-owned PR continuation", async () => {
+        const tracker = new WatchTracker({
+            comments: {
+                "CG-3": [
+                    {
+                        body: "please rename the function",
+                        createdAt: "2026-02-01T00:00:00.000Z",
+                        id: "h1",
+                        isBot: false,
+                    },
+                ],
+            },
+            inReview: [issue({ key: "CG-3", labels: ["changes-requested"] })],
+            todo: [],
+        });
+        const { fs } = memRunsFs();
+        saveRecord(
+            "/runs",
+            {
+                agent: "claude",
+                cwd: "/repo/bin",
+                key: "CG-3",
+                jobKind: "implement",
+                prUrl: "https://github.com/x/y/pull/1",
+                runMode: "autonomous",
+                sessionName: "CG-3",
+                status: "done",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+            fs,
+        );
+        const { driver, seen } = fakeDriver();
+        const out = await watchTick("CG", deps({ driver, registry: beflowOwnedRegistry(), runsFs: fs, tracker }));
+        expect(out).toEqual({ action: "rework", key: "CG-3" });
+        expect(seen).toHaveLength(1);
+        // beflow owns the PR: the agent must NOT be told to open/update it via gh.
+        expect(seen[0]!.task).toContain(BEFLOW_OWNED_MARKER);
+        expect(seen[0]!.task).not.toContain(AGENT_OWNED_MARKER);
     });
 
     it("changes-requested without feedback: posts guidance once and does not dispatch", async () => {
@@ -1128,6 +1189,34 @@ describe("watchTick CI-red auto-rework", () => {
         expect(rec?.ciReworkSha).toBe("deadbeef");
         // CI-rework increments the universal counter (re-stamped after runIssue reset it).
         expect(rec?.attempts).toBe(1);
+        // Agent-owned by default: the CI note tells the agent to update the existing PR.
+        expect(seen[0]!.task).toContain("update the existing PR (https://github.com/x/y/pull/1)");
+        expect(seen[0]!.task).toContain(AGENT_OWNED_MARKER);
+    });
+
+    it("beflow-owned CI-rework: the note says push the branch, not update the PR", async () => {
+        const tracker = new WatchTracker({ inReview: [issue({ key: "CG-3" })], todo: [] });
+        const { fs } = memRunsFs();
+        ciRecord(fs);
+        const { driver, seen } = fakeDriver();
+        const out = await watchTick(
+            "CG",
+            deps({
+                driver,
+                prChecks: async () => ({ failing: ["build", "lint"], sha: "deadbeef", state: "failing" }),
+                registry: beflowOwnedRegistry(true),
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        expect(out).toEqual({ action: "ci-rework", key: "CG-3" });
+        expect(seen).toHaveLength(1);
+        expect(seen[0]!.task).toContain("The CI checks on this PR are failing (build, lint)");
+        // beflow owns the PR: the note must NOT tell the agent to update the PR via gh.
+        expect(seen[0]!.task).not.toContain("update the existing PR");
+        expect(seen[0]!.task).toContain("push your branch (beflow updates the PR)");
+        expect(seen[0]!.task).toContain(BEFLOW_OWNED_MARKER);
+        expect(seen[0]!.task).not.toContain(AGENT_OWNED_MARKER);
     });
 
     it("throttles: does NOT rework the same head SHA twice", async () => {

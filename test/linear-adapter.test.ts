@@ -9,7 +9,14 @@ import type {
     ListIssuesQuery,
     StateGroupLike,
 } from "../src/trackers/linear/client.ts";
-import type { RawBlocker, RawComment, RawIssue, RawLabel, RawWorkflowState } from "../src/trackers/linear/types.ts";
+import type {
+    RawAttachment,
+    RawBlocker,
+    RawComment,
+    RawIssue,
+    RawLabel,
+    RawWorkflowState,
+} from "../src/trackers/linear/types.ts";
 import { IssueNotFoundError } from "../src/trackers/tracker.ts";
 
 const registry: Registry = {
@@ -42,6 +49,7 @@ interface FakeOptions {
     created?: RawIssue;
     blockers?: RawBlocker[];
     comments?: RawComment[];
+    attachments?: RawAttachment[];
 }
 
 function fakeGateway(opts: FakeOptions = {}) {
@@ -90,6 +98,10 @@ function fakeGateway(opts: FakeOptions = {}) {
                 throw new Error("no issue configured");
             }
             return opts.issue;
+        },
+        listAttachments: async (issueId) => {
+            calls.push({ op: "listAttachments", args: [issueId] });
+            return opts.attachments ?? [];
         },
         listComments: async (issueId) => {
             calls.push({ op: "listComments", args: [issueId] });
@@ -359,16 +371,24 @@ describe("LinearTracker.comment and linkPR", () => {
     it("passes markdown with the beflow marker appended", async () => {
         const { tracker: t, calls } = tracker();
         await t.comment(issue(), "**bold**\n\npara");
-        expect(calls[0]).toEqual({
+        expect(calls.find((c) => c.op === "createComment")).toEqual({
             args: ["iss-1", "**bold**\n\npara\n\n— beflow"],
             op: "createComment",
         });
     });
 
+    it("does not post a comment whose marked body already exists (replayed writeback)", async () => {
+        const { tracker: t, calls } = tracker({
+            comments: [{ body: "done\n\n— beflow", createdAt: "2026-06-15T00:00:00.000Z", id: "c-1" }],
+        });
+        await t.comment(issue(), "done");
+        expect(calls.some((c) => c.op === "createComment")).toBe(false);
+    });
+
     it("creates an attachment with the provided title", async () => {
         const { tracker: t, calls } = tracker();
         await t.linkPR(issue(), "http://pr", "My PR");
-        expect(calls[0]).toEqual({
+        expect(calls.find((c) => c.op === "createAttachment")).toEqual({
             args: ["iss-1", "http://pr", "My PR"],
             op: "createAttachment",
         });
@@ -377,10 +397,18 @@ describe("LinearTracker.comment and linkPR", () => {
     it("defaults the attachment title to Pull Request", async () => {
         const { tracker: t, calls } = tracker();
         await t.linkPR(issue(), "http://pr");
-        expect(calls[0]).toEqual({
+        expect(calls.find((c) => c.op === "createAttachment")).toEqual({
             args: ["iss-1", "http://pr", "Pull Request"],
             op: "createAttachment",
         });
+    });
+
+    it("does not attach a PR url that is already linked (replayed writeback)", async () => {
+        const { tracker: t, calls } = tracker({
+            attachments: [{ id: "att-1", title: "Pull Request", url: "http://pr" }],
+        });
+        await t.linkPR(issue(), "http://pr");
+        expect(calls.some((c) => c.op === "createAttachment")).toBe(false);
     });
 });
 

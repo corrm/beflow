@@ -275,7 +275,14 @@ export class LinearTracker implements Tracker {
 
     public async comment(issue: Issue, body: string): Promise<void> {
         // Linear comments take markdown directly — no HTML conversion.
-        await this.gateway.createComment(issue.id, withMarker(body));
+        const marked = withMarker(body);
+        // Idempotent: writeback is replayed on a resumed run, so don't post the
+        // Same comment twice.
+        const existing = await this.gateway.listComments(issue.id);
+        if (existing.some((c) => c.body === marked)) {
+            return;
+        }
+        await this.gateway.createComment(issue.id, marked);
     }
 
     public async listComments(issue: Issue): Promise<Comment[]> {
@@ -292,6 +299,12 @@ export class LinearTracker implements Tracker {
     }
 
     public async linkPR(issue: Issue, url: string, title?: string): Promise<void> {
+        // Idempotent: writeback is replayed on a resumed run, so skip if this
+        // URL is already attached.
+        const existing = await this.gateway.listAttachments(issue.id);
+        if (existing.some((a) => a.url === url)) {
+            return;
+        }
         await this.gateway.createAttachment(issue.id, url, title ?? "Pull Request");
     }
 

@@ -1,6 +1,6 @@
 import type { LinearClient } from "@linear/sdk";
 
-import type { RawBlocker, RawComment, RawIssue, RawLabel, RawWorkflowState } from "./types.ts";
+import type { RawAttachment, RawBlocker, RawComment, RawIssue, RawLabel, RawWorkflowState } from "./types.ts";
 
 export interface ListIssuesQuery {
     stateName?: string;
@@ -32,6 +32,7 @@ export interface LinearGateway {
     createComment(issueId: string, body: string): Promise<void>;
     listComments(issueId: string): Promise<RawComment[]>;
     createAttachment(issueId: string, url: string, title: string): Promise<void>;
+    listAttachments(issueId: string): Promise<RawAttachment[]>;
     listStates(teamKey: string): Promise<RawWorkflowState[]>;
     listLabels(teamKey: string): Promise<RawLabel[]>;
     createState(teamKey: string, state: { name: string; type: StateGroupLike; color: string }): Promise<void>;
@@ -57,6 +58,28 @@ export function toLinearStateType(type: string): string {
 // resolveIssue depends only on the structural subset declared below; deriving
 // the type from the SDK avoids an unsafe narrowing cast.
 type SdkIssueSource = Awaited<ReturnType<LinearClient["issue"]>>;
+
+// The structural subset of an SDK paginated connection the gateway relies on to
+// walk every page. The SDK's default page is ~50, so reading only the first page
+// silently truncates larger teams/issues.
+export interface SdkConnection<T> {
+    nodes: T[];
+    pageInfo: { hasNextPage: boolean };
+    fetchNext(): Promise<SdkConnection<T>>;
+}
+
+export async function collectNodes<T>(first: SdkConnection<T>): Promise<T[]> {
+    const nodes: T[] = [];
+    let connection = first;
+    for (;;) {
+        nodes.push(...connection.nodes);
+        if (!connection.pageInfo.hasNextPage) {
+            break;
+        }
+        connection = await connection.fetchNext();
+    }
+    return nodes;
+}
 
 const DEFAULT_STATE_COLOR = "#95a2b3";
 const DEFAULT_LABEL_COLOR = "#bec2c8";
@@ -119,9 +142,9 @@ export class LinearSdkGateway implements LinearGateway {
     // SOURCE issue (node.issue) as the blocker; node.relatedIssue is this issue.
     public async getBlockers(issueId: string): Promise<RawBlocker[]> {
         const issue = await this.client.issue(issueId);
-        const inv = await issue.inverseRelations();
+        const relations = await collectNodes(await issue.inverseRelations());
         const blockers: RawBlocker[] = [];
-        for (const node of inv.nodes) {
+        for (const node of relations) {
             if (node.type !== "blocks") {
                 continue;
             }
@@ -202,9 +225,9 @@ export class LinearSdkGateway implements LinearGateway {
 
     public async listComments(issueId: string): Promise<RawComment[]> {
         const issue = await this.client.issue(issueId);
-        const conn = await issue.comments();
+        const nodes = await collectNodes(await issue.comments());
         const comments: RawComment[] = [];
-        for (const node of conn.nodes) {
+        for (const node of nodes) {
             const user = await node.user;
             comments.push({
                 ...(user?.id !== undefined ? { authorId: user.id } : {}),
@@ -220,16 +243,22 @@ export class LinearSdkGateway implements LinearGateway {
         await this.client.createAttachment({ issueId, title, url });
     }
 
+    public async listAttachments(issueId: string): Promise<RawAttachment[]> {
+        const issue = await this.client.issue(issueId);
+        const nodes = await collectNodes(await issue.attachments());
+        return nodes.map((a) => ({ id: a.id, title: a.title, url: a.url }));
+    }
+
     public async listStates(teamKey: string): Promise<RawWorkflowState[]> {
         const team = await this.client.team(await this.teamId(teamKey));
-        const conn = await team.states();
-        return conn.nodes.map((s) => ({ id: s.id, name: s.name, type: fromLinearStateType(s.type) }));
+        const nodes = await collectNodes(await team.states());
+        return nodes.map((s) => ({ id: s.id, name: s.name, type: fromLinearStateType(s.type) }));
     }
 
     public async listLabels(teamKey: string): Promise<RawLabel[]> {
         const team = await this.client.team(await this.teamId(teamKey));
-        const conn = await team.labels();
-        return conn.nodes.map((l) => ({ id: l.id, name: l.name }));
+        const nodes = await collectNodes(await team.labels());
+        return nodes.map((l) => ({ id: l.id, name: l.name }));
     }
 
     public async createState(

@@ -8,6 +8,7 @@ import {
     pickActiveCycle,
     priorityRank,
     toCommentHtml,
+    unescapeHtml,
 } from "../src/trackers/plane/map.ts";
 import type { MapContext } from "../src/trackers/plane/map.ts";
 import type {
@@ -87,6 +88,27 @@ describe("toCommentHtml", () => {
 
     it("escaping happens before tag wrapping", () => {
         expect(toCommentHtml("<script>")).toBe("<p>&lt;script&gt;</p>");
+    });
+});
+
+describe("unescapeHtml", () => {
+    it("decodes &lt; &gt; &amp;", () => {
+        expect(unescapeHtml("a &amp; b &lt; c &gt; d")).toBe("a & b < c > d");
+    });
+
+    it("is the exact inverse of escapeHtml (round-trip identity)", () => {
+        const inputs = ["a & b < c > d", "plain text", "<already> &escaped&", "&&amp;"];
+        for (const s of inputs) {
+            expect(unescapeHtml(toCommentHtml(s).replace(/<[^>]*>/g, ""))).toBe(s);
+        }
+    });
+
+    it("decodes &amp; last so &amp;lt; round-trips to &lt; not <", () => {
+        expect(unescapeHtml("&amp;lt;")).toBe("&lt;");
+    });
+
+    it("leaves plain text unchanged", () => {
+        expect(unescapeHtml("hello world")).toBe("hello world");
     });
 });
 

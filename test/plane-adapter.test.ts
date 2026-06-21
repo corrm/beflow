@@ -763,6 +763,24 @@ describe("PlaneTracker.listComments", () => {
         expect(comment!.body).toBe("only html");
         expect(comment!.isBot).toBe(false);
     });
+
+    it("decodes HTML entities in the tag-strip fallback when comment_stripped is absent", async () => {
+        const { tracker: t } = tracker([
+            {
+                match: (u, m) => m === "GET" && u.includes("/comments/"),
+                respond: () =>
+                    page([
+                        {
+                            comment_html: "<p>a &amp;amp; b &amp;lt; c &amp;gt; d</p>",
+                            created_at: "2024-01-01T00:00:00Z",
+                            id: "c1",
+                        },
+                    ]),
+            },
+        ]);
+        const [comment] = await t.listComments(baseIssue());
+        expect(comment!.body).toBe("a &amp; b &lt; c &gt; d");
+    });
 });
 
 describe("PlaneTracker inbox", () => {

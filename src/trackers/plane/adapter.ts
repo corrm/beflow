@@ -23,7 +23,7 @@ import type {
 } from "../tracker.ts";
 import { IssueNotFoundError } from "../tracker.ts";
 import { PlaneClient, PlaneHttpError } from "./client.ts";
-import { mapIntakeItem, mapWorkItem, pickActiveCycle, priorityRank, toCommentHtml } from "./map.ts";
+import { mapIntakeItem, mapWorkItem, pickActiveCycle, priorityRank, toCommentHtml, unescapeHtml } from "./map.ts";
 import type { MapContext } from "./map.ts";
 import type { RawLabel, RawModule, RawState, RawWorkItemType } from "./types.ts";
 
@@ -416,7 +416,7 @@ export class PlaneTracker implements Tracker {
         return raws
             .map((raw) => {
                 const source = raw.comment_html ?? raw.comment_stripped ?? "";
-                const textBody = raw.comment_stripped ?? source.replace(/<[^>]*>/g, "");
+                const textBody = raw.comment_stripped ?? unescapeHtml(source.replace(/<[^>]*>/g, ""));
                 return {
                     authorId: raw.created_by,
                     body: stripMarker(textBody),

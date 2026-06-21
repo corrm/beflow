@@ -1,9 +1,9 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { z } from "zod";
 
+import { xdgStateHome } from "../config/xdg.ts";
 import { expandHome, sanitizeKey } from "./worktree.ts";
 
 export const reportSchema = z.object({
@@ -50,7 +50,7 @@ export type RunRecord = z.infer<typeof runRecordSchema>;
 
 /** Resolve the run-record base dir: the configured value (~-expanded) or the default. */
 export function resolveRunsDir(configured?: string): string {
-    return configured !== undefined ? expandHome(configured) : join(homedir(), ".beflow", "runs");
+    return configured !== undefined ? expandHome(configured) : join(xdgStateHome(), "runs");
 }
 
 function recordPath(runsDir: string, key: string): string {

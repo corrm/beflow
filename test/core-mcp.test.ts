@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { join } from "node:path";
 
+import { xdgConfigHome } from "../src/config/xdg.ts";
 import { defaultMcpDeps, injectAcpxMcp, loadMcpServers, mcpFileSchema } from "../src/core/mcp.ts";
 import type { McpFs, McpResolveDeps, McpServer } from "../src/core/mcp.ts";
 
@@ -7,7 +9,6 @@ function fakeResolveDeps(files: Record<string, string>): McpResolveDeps {
     return {
         configDir: "/cfg",
         exists: (p) => p in files,
-        home: "/home",
         read: (p) => {
             const v = files[p];
             if (v === undefined) {
@@ -91,20 +92,30 @@ describe("loadMcpServers cascade", () => {
     });
 
     it("merges global + project, with project overriding global by name", () => {
-        const deps = fakeResolveDeps({
-            "/cfg/.mcp.json": JSON.stringify({
-                mcpServers: { shared: { command: "project-cmd" } },
-            }),
-            "/home/.beflow/.mcp.json": JSON.stringify({
-                mcpServers: { onlyGlobal: { command: "g" }, shared: { command: "global-cmd" } },
-            }),
-        });
-        const servers = loadMcpServers(deps);
-        const byName = new Map(servers.map((s) => [s.name, s]));
-        expect(byName.size).toBe(2);
-        // Project wins for the shared name.
-        expect(byName.get("shared")).toEqual({ args: [], command: "project-cmd", env: [], name: "shared" });
-        expect(byName.get("onlyGlobal")).toEqual({ args: [], command: "g", env: [], name: "onlyGlobal" });
+        const prior = process.env.XDG_CONFIG_HOME;
+        process.env.XDG_CONFIG_HOME = "/xdg-config";
+        try {
+            const deps = fakeResolveDeps({
+                "/cfg/.mcp.json": JSON.stringify({
+                    mcpServers: { shared: { command: "project-cmd" } },
+                }),
+                [join(xdgConfigHome(), ".mcp.json")]: JSON.stringify({
+                    mcpServers: { onlyGlobal: { command: "g" }, shared: { command: "global-cmd" } },
+                }),
+            });
+            const servers = loadMcpServers(deps);
+            const byName = new Map(servers.map((s) => [s.name, s]));
+            expect(byName.size).toBe(2);
+            // Project wins for the shared name.
+            expect(byName.get("shared")).toEqual({ args: [], command: "project-cmd", env: [], name: "shared" });
+            expect(byName.get("onlyGlobal")).toEqual({ args: [], command: "g", env: [], name: "onlyGlobal" });
+        } finally {
+            if (prior === undefined) {
+                delete process.env.XDG_CONFIG_HOME;
+            } else {
+                process.env.XDG_CONFIG_HOME = prior;
+            }
+        }
     });
 });
 
@@ -229,9 +240,8 @@ describe("injectAcpxMcp", () => {
 });
 
 describe("defaultMcpDeps", () => {
-    it("carries the configDir and a home", () => {
+    it("carries the configDir", () => {
         const deps = defaultMcpDeps("/some/dir");
         expect(deps.configDir).toBe("/some/dir");
-        expect(typeof deps.home).toBe("string");
     });
 });

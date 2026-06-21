@@ -1,8 +1,9 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { xdgConfigHome } from "./xdg.ts";
+
 export function configDir(): string {
-    return join(homedir(), "beflow");
+    return xdgConfigHome();
 }
 
 export function configPath(): string {

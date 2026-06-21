@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { spawn } from "bun";
 
+import { xdgStateHome } from "../src/config/xdg.ts";
 import {
     buildDecisionEvent,
     LocalNdjsonSink,
@@ -92,8 +93,8 @@ function lines(store: Map<string, string>, dir: string): unknown[] {
 }
 
 describe("resolveDecisionsDir", () => {
-    it("defaults to ~/.beflow/decisions (a sibling of runs)", () => {
-        expect(resolveDecisionsDir()).toBe(join(homedir(), ".beflow", "decisions"));
+    it("defaults under the XDG state home (a sibling of runs)", () => {
+        expect(resolveDecisionsDir()).toBe(join(xdgStateHome(), "decisions"));
     });
 
     it("expands and uses a configured dir", () => {

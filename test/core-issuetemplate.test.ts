@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { join } from "node:path";
 
+import { xdgConfigHome } from "../src/config/xdg.ts";
 import {
     issueTemplateSchema,
     listIssueTemplates,
@@ -31,6 +33,22 @@ questions:
 ## Steps
 {{steps}}
 `;
+
+// Run a body with XDG_CONFIG_HOME pinned to an absolute path so the global
+// Template-dir fallback (xdgConfigHome()) is hermetic; restore the prior value.
+function withXdgConfigHome(body: (globalDir: string) => void): void {
+    const prior = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = "/xdg-config";
+    try {
+        body(xdgConfigHome());
+    } finally {
+        if (prior === undefined) {
+            delete process.env.XDG_CONFIG_HOME;
+        } else {
+            process.env.XDG_CONFIG_HOME = prior;
+        }
+    }
+}
 
 function depsFrom(files: Record<string, string>, promptsDir?: string): IssueTemplateResolveDeps {
     const dirEntries = (dir: string): string[] => {
@@ -121,29 +139,35 @@ describe("issueTemplateSchema", () => {
 });
 
 describe("loadIssueTemplate — cascade", () => {
-    it("configDir wins over home", () => {
-        const tpl = loadIssueTemplate(
-            "bug",
-            depsFrom({
-                "/cfg/prompts/issues/bug.md": BUG_TEMPLATE,
-                "/home/.beflow/prompts/issues/bug.md": "---\nname: bug\ndescription: HOME\n---\nbody\n",
-            }),
-        );
-        expect(tpl.description).toBe("A reproducible defect");
+    it("configDir wins over the global dir", () => {
+        withXdgConfigHome((globalDir) => {
+            const tpl = loadIssueTemplate(
+                "bug",
+                depsFrom({
+                    "/cfg/prompts/issues/bug.md": BUG_TEMPLATE,
+                    [join(globalDir, "prompts", "issues", "bug.md")]:
+                        "---\nname: bug\ndescription: GLOBAL\n---\nbody\n",
+                }),
+            );
+            expect(tpl.description).toBe("A reproducible defect");
+        });
     });
 
-    it("respects promptsDir over home", () => {
-        const tpl = loadIssueTemplate(
-            "bug",
-            depsFrom(
-                {
-                    "/custom/issues/bug.md": "---\nname: bug\ndescription: CUSTOM\n---\nbody\n",
-                    "/home/.beflow/prompts/issues/bug.md": "---\nname: bug\ndescription: HOME\n---\nbody\n",
-                },
-                "/custom",
-            ),
-        );
-        expect(tpl.description).toBe("CUSTOM");
+    it("respects promptsDir over the global dir", () => {
+        withXdgConfigHome((globalDir) => {
+            const tpl = loadIssueTemplate(
+                "bug",
+                depsFrom(
+                    {
+                        "/custom/issues/bug.md": "---\nname: bug\ndescription: CUSTOM\n---\nbody\n",
+                        [join(globalDir, "prompts", "issues", "bug.md")]:
+                            "---\nname: bug\ndescription: GLOBAL\n---\nbody\n",
+                    },
+                    "/custom",
+                ),
+            );
+            expect(tpl.description).toBe("CUSTOM");
+        });
     });
 
     it("expands a leading ~ in promptsDir", () => {
@@ -170,15 +194,18 @@ describe("loadIssueTemplate — cascade", () => {
 
 describe("listIssueTemplates", () => {
     it("unions and dedupes across dirs and compiled defaults, sorted, higher priority wins description", () => {
-        const entries = listIssueTemplates(
-            depsFrom({
-                "/cfg/prompts/issues/bug.md": BUG_TEMPLATE,
-                "/home/.beflow/prompts/issues/bug.md": "---\nname: bug\ndescription: HOME-BUG\n---\nbody\n",
-                "/home/.beflow/prompts/issues/zeta.md": "---\nname: zeta\ndescription: Z\n---\nbody\n",
-            }),
-        );
-        expect(entries.map((e) => e.name)).toEqual(["bug", "feature", "generic", "spike", "zeta"]);
-        expect(entries.find((e) => e.name === "bug")?.description).toBe("A reproducible defect");
+        withXdgConfigHome((globalDir) => {
+            const entries = listIssueTemplates(
+                depsFrom({
+                    "/cfg/prompts/issues/bug.md": BUG_TEMPLATE,
+                    [join(globalDir, "prompts", "issues", "bug.md")]:
+                        "---\nname: bug\ndescription: GLOBAL-BUG\n---\nbody\n",
+                    [join(globalDir, "prompts", "issues", "zeta.md")]: "---\nname: zeta\ndescription: Z\n---\nbody\n",
+                }),
+            );
+            expect(entries.map((e) => e.name)).toEqual(["bug", "feature", "generic", "spike", "zeta"]);
+            expect(entries.find((e) => e.name === "bug")?.description).toBe("A reproducible defect");
+        });
     });
 });
 

@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { xdgConfigHome } from "../config/xdg.ts";
 import type { Issue, JobKind } from "../model/types.ts";
 import continuationDefault from "../prompts/defaults/continuation.md" with { type: "text" };
 import decisionReceiptDefault from "../prompts/defaults/decision-receipt.md" with { type: "text" };
@@ -61,14 +62,14 @@ function expandHome(p: string, home: string): string {
 }
 
 // Override cascade candidate paths for a `<basename>.md`, highest priority first:
-// project-local (beside config.json), the configured prompts.dir, then
-// ~/.beflow/prompts.
+// project-local (beside config.json), the configured prompts.dir, then the global
+// $XDG_CONFIG_HOME/beflow/prompts.
 function promptCandidates(basename: string, deps: PromptResolveDeps): string[] {
     const candidates: string[] = [join(deps.configDir, "prompts", `${basename}.md`)];
     if (deps.promptsDir !== undefined) {
         candidates.push(join(expandHome(deps.promptsDir, deps.home), `${basename}.md`));
     }
-    candidates.push(join(deps.home, ".beflow", "prompts", `${basename}.md`));
+    candidates.push(join(xdgConfigHome(), "prompts", `${basename}.md`));
     return candidates;
 }
 

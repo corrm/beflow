@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { spawn } from "bun";
 
+import { xdgDataHome } from "../config/xdg.ts";
+
 export interface ExecResult {
     code: number;
     stdout: string;
@@ -31,7 +33,7 @@ export function expandHome(path: string): string {
 
 /** Resolve the worktree base dir: the configured value (~-expanded) or the default. */
 export function resolveWorktreeDir(configured?: string): string {
-    return configured !== undefined ? expandHome(configured) : join(homedir(), ".beflow", "worktrees");
+    return configured !== undefined ? expandHome(configured) : join(xdgDataHome(), "worktrees");
 }
 
 export function worktreePath(baseDir: string, key: string): string {

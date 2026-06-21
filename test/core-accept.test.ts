@@ -80,6 +80,7 @@ class InboxTracker implements Tracker {
     async createProject(): Promise<ProjectCreateResult> {
         throw new Error("not implemented");
     }
+    async verifyAuth(): Promise<void> {}
 }
 
 describe("acceptIntake", () => {

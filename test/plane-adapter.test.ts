@@ -86,7 +86,14 @@ function tracker(routes: RouteHandler[]) {
         fetch,
         workspaceSlug: "your-workspace",
     });
-    return { calls, tracker: new PlaneTracker({ client, registry }) };
+    return {
+        calls,
+        tracker: new PlaneTracker({
+            auth: { apiKeyEnv: "PLANE_API_KEY", workspaceSlug: "your-workspace" },
+            client,
+            registry,
+        }),
+    };
 }
 
 const STATES = [
@@ -1689,6 +1696,50 @@ describe("PlaneTracker.createProject", () => {
         expect(post.url).toContain("/workspaces/your-workspace/projects/");
         expect(post.body).toEqual({ identifier: "NP", name: "New Project" });
         expect(result).toEqual({ trackerProjectId: "proj-new" });
+    });
+});
+
+describe("PlaneTracker.verifyAuth", () => {
+    function authTracker(slug: string, routes: RouteHandler[]) {
+        const { fetch, calls } = router(routes);
+        const client = new PlaneClient({ apiKey: "k", fetch, workspaceSlug: slug });
+        return {
+            calls,
+            tracker: new PlaneTracker({
+                auth: { apiKeyEnv: "PLANE_API_KEY", workspaceSlug: slug },
+                client,
+                registry,
+            }),
+        };
+    }
+
+    it("short-circuits the placeholder workspace without any network call", async () => {
+        const { tracker: t, calls } = authTracker("your-workspace", []);
+        expect(t.verifyAuth()).rejects.toThrow(/placeholder "your-workspace"/);
+        await Promise.resolve();
+        expect(calls).toHaveLength(0);
+    });
+
+    it("resolves when the whoami endpoint returns 200", async () => {
+        const { tracker: t, calls } = authTracker("acme", [
+            { match: (u, m) => m === "GET" && u.includes("/users/me/"), respond: () => json({ id: "u-1" }) },
+        ]);
+        await t.verifyAuth();
+        expect(calls.some((c) => c.url.includes("/users/me/"))).toBe(true);
+    });
+
+    it("maps a 401 to an actionable error naming the slug + env var", () => {
+        const { tracker: t } = authTracker("acme", [
+            { match: (u, m) => m === "GET" && u.includes("/users/me/"), respond: () => json({}, 401) },
+        ]);
+        expect(t.verifyAuth()).rejects.toThrow(/Plane token invalid for workspace "acme".*PLANE_API_KEY/s);
+    });
+
+    it("maps a 403 to an actionable error naming the slug + env var", () => {
+        const { tracker: t } = authTracker("acme", [
+            { match: (u, m) => m === "GET" && u.includes("/users/me/"), respond: () => json({}, 403) },
+        ]);
+        expect(t.verifyAuth()).rejects.toThrow(/Plane token invalid for workspace "acme".*PLANE_API_KEY/s);
     });
 });
 

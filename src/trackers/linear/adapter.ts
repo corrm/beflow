@@ -1,5 +1,6 @@
 import { LinearClient } from "@linear/sdk";
 
+import { configPath } from "../../config/paths.ts";
 import type { Config, Registry } from "../../config/schema.ts";
 import type { Issue, IssueMeta } from "../../model/types.ts";
 import { parseIssueMeta } from "../../resolve/metadata.ts";
@@ -35,6 +36,7 @@ interface TeamCaches {
 export interface LinearTrackerOptions {
     gateway: LinearGateway;
     registry: Registry;
+    apiKeyEnv: string;
 }
 
 // Linear seeds a default "Canceled" state (American spelling); beflow's template
@@ -48,11 +50,13 @@ function canonicalStateName(name: string): string {
 export class LinearTracker implements Tracker {
     private readonly gateway: LinearGateway;
     private readonly registry: Registry;
+    private readonly apiKeyEnv: string;
     private readonly caches = new Map<string, TeamCaches>();
 
     public constructor(options: LinearTrackerOptions) {
         this.gateway = options.gateway;
         this.registry = options.registry;
+        this.apiKeyEnv = options.apiKeyEnv;
     }
 
     // For Linear the registry project key IS the Linear team key (e.g. "CG").
@@ -383,6 +387,14 @@ export class LinearTracker implements Tracker {
 
         return result;
     }
+    public async verifyAuth(): Promise<void> {
+        try {
+            await this.gateway.verifyAuth();
+        } catch {
+            throw new Error(`beflow: Linear token invalid — check ${this.apiKeyEnv} in ${configPath()}`);
+        }
+    }
+
     public async createProject(spec: ProjectCreateSpec): Promise<ProjectCreateResult> {
         const team = await this.gateway.createTeam({ key: spec.identifier, name: spec.name });
         return { trackerProjectId: team.id };
@@ -405,7 +417,7 @@ export function createLinearTracker(
     }
 
     const gateway = new LinearSdkGateway(new LinearClient({ apiKey }));
-    return new LinearTracker({ gateway, registry });
+    return new LinearTracker({ apiKeyEnv: linearConfig.apiKeyEnv, gateway, registry });
 }
 
 // Message-based heuristic: the Linear SDK surfaces an unknown identifier as a

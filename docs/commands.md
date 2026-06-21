@@ -72,6 +72,13 @@ labels, work-item types, and modules from `module_repo_map`). Idempotent:
 creates what's missing, leaves matching items untouched. `update` is an alias of
 `setup`.
 
+Before anything else, setup verifies the tracker token with a cheap auth probe
+and fails fast with an actionable message (naming the API-key env var, the
+workspace slug, and `config.json`) — so a bad or unconfigured token surfaces up
+front, not after you have filled in the interactive walkthrough. A workspace
+slug still left at the bootstrap placeholder (`your-workspace`) is rejected
+before any network call.
+
 If the project key is not yet in `config.json`, setup interactively creates the
 tracker project (a Plane project / a Linear team), writes the config entry, then
 provisions the board.

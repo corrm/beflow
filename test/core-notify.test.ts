@@ -160,6 +160,7 @@ class FakeTracker implements Tracker {
     async createProject(): Promise<ProjectCreateResult> {
         throw new Error("not implemented");
     }
+    async verifyAuth(): Promise<void> {}
 }
 
 function spyNotifier(): { events: NotifyEvent[]; notifier: Notifier } {
@@ -853,6 +854,7 @@ class WatchTracker implements Tracker {
     async createProject(): Promise<ProjectCreateResult> {
         throw new Error("not implemented");
     }
+    async verifyAuth(): Promise<void> {}
 }
 
 function watchIssue(key: string): Issue {

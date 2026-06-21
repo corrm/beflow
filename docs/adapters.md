@@ -49,6 +49,7 @@ interface Tracker {
   inspectBoard(project: string): Promise<BoardState>;
   ensureBoard(project: string, template: BoardTemplate, opts?: EnsureBoardOptions): Promise<EnsureBoardResult>;
   createProject(spec: ProjectCreateSpec): Promise<ProjectCreateResult>;
+  verifyAuth(): Promise<void>;
 }
 ```
 
@@ -138,6 +139,13 @@ delete. Called by [`beflow setup`](commands.md#setup-project--update-project).
 **`createProject(spec)`** — Create a new project from `ProjectCreateSpec`.
 Return `ProjectCreateResult`, which carries the tracker-internal project ID in
 `trackerProjectId` when applicable.
+
+**`verifyAuth()`** — Cheap auth probe (e.g. a whoami call). Resolve when the
+token is valid; otherwise throw a clear, actionable error naming the API-key env
+var and `config.json`. [`beflow setup`](commands.md#setup-project--update-project)
+calls this first so a bad or unconfigured token fails fast before the interactive
+walkthrough. Reuse existing config (the API-key env var and workspace slug); this
+adds no new config keys.
 
 ## Shared model types
 

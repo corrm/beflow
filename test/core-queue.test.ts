@@ -100,6 +100,7 @@ class QueueTracker implements Tracker {
     async createProject(): Promise<ProjectCreateResult> {
         throw new Error("not implemented");
     }
+    async verifyAuth(): Promise<void> {}
 }
 
 describe("queueView", () => {

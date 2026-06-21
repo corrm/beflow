@@ -169,6 +169,22 @@ questions:
 {{summary}}
 `;
 
+const ENRICH_SPEC_TEMPLATE = `---
+name: spec
+description: An enriched spec with reserved labels set
+enrich: true
+agent: claude
+jobKind: spec
+runMode: supervised
+labels: [feature]
+title: "{{summary}}"
+questions:
+  - { key: summary, label: One-line summary, type: text, required: true }
+---
+## Summary
+{{summary}}
+`;
+
 const ENRICH_FALSE_TEMPLATE = `---
 name: plain
 description: enrich disabled
@@ -600,5 +616,97 @@ describe("defaultEnrichIssue", () => {
         const fence = await enrich({ ...input, template: loadFeatureTemplate() });
         expect(fence).toBeNull();
         expect(logs.some((m) => m.includes("enrich agent failed"))).toBe(true);
+    });
+});
+
+describe("newIssue — enrich reserved-namespace gating", () => {
+    it("template jobkind wins: enrich jobkind label is dropped", async () => {
+        const tracker = new FakeTracker();
+        const { enrich } = fenceEnrich({ body: "b", labels: ["jobkind:implement", "customer-reported"] });
+        const deps = makeDeps({
+            askQuestions: async () => ({ summary: "x" }),
+            enrich,
+            templateDeps: depsFrom({ "/cfg/prompts/issues/spec.md": ENRICH_SPEC_TEMPLATE }),
+            tracker,
+        });
+        await newIssue("CG", "spec", deps);
+        const labels = tracker.createCalls[0]?.draft.labels ?? [];
+        expect(labels).toContain("jobkind:spec");
+        expect(labels).not.toContain("jobkind:implement");
+    });
+
+    it("template agent wins: enrich agent label is dropped", async () => {
+        const tracker = new FakeTracker();
+        const { enrich } = fenceEnrich({ body: "b", labels: ["agent:gpt4"] });
+        const deps = makeDeps({
+            askQuestions: async () => ({ summary: "x" }),
+            enrich,
+            templateDeps: depsFrom({ "/cfg/prompts/issues/spec.md": ENRICH_SPEC_TEMPLATE }),
+            tracker,
+        });
+        await newIssue("CG", "spec", deps);
+        const labels = tracker.createCalls[0]?.draft.labels ?? [];
+        expect(labels).toContain("agent:claude");
+        expect(labels).not.toContain("agent:gpt4");
+    });
+
+    it("template run wins: enrich run label is dropped", async () => {
+        const tracker = new FakeTracker();
+        const { enrich } = fenceEnrich({ body: "b", labels: ["run:autonomous"] });
+        const deps = makeDeps({
+            askQuestions: async () => ({ summary: "x" }),
+            enrich,
+            templateDeps: depsFrom({ "/cfg/prompts/issues/spec.md": ENRICH_SPEC_TEMPLATE }),
+            tracker,
+        });
+        await newIssue("CG", "spec", deps);
+        const labels = tracker.createCalls[0]?.draft.labels ?? [];
+        expect(labels).toContain("run:supervised");
+        expect(labels).not.toContain("run:autonomous");
+    });
+
+    it("open/free-form enrich labels are additive", async () => {
+        const tracker = new FakeTracker();
+        const { enrich } = fenceEnrich({ body: "b", labels: ["customer-reported"] });
+        const deps = makeDeps({
+            askQuestions: async () => ({ summary: "x" }),
+            enrich,
+            templateDeps: depsFrom({ "/cfg/prompts/issues/spec.md": ENRICH_SPEC_TEMPLATE }),
+            tracker,
+        });
+        await newIssue("CG", "spec", deps);
+        const labels = tracker.createCalls[0]?.draft.labels ?? [];
+        expect(labels).toContain("customer-reported");
+    });
+
+    it("enrich fills a reserved namespace the template leaves unset", async () => {
+        // ENRICH_TEMPLATE has no agent/run/jobKind set, so enrich can supply them.
+        const tracker = new FakeTracker();
+        const { enrich } = fenceEnrich({ body: "b", labels: ["agent:claude", "jobkind:spec"] });
+        const deps = makeDeps({
+            askQuestions: async () => ({ summary: "x" }),
+            enrich,
+            templateDeps: depsFrom({ "/cfg/prompts/issues/feature.md": ENRICH_TEMPLATE }),
+            tracker,
+        });
+        await newIssue("CG", "feature", deps);
+        const labels = tracker.createCalls[0]?.draft.labels ?? [];
+        expect(labels).toContain("agent:claude");
+        expect(labels).toContain("jobkind:spec");
+    });
+
+    it("exact-duplicate labels from enrich are deduped", async () => {
+        const tracker = new FakeTracker();
+        const { enrich } = fenceEnrich({ body: "b", labels: ["feature", "customer-reported"] });
+        const deps = makeDeps({
+            askQuestions: async () => ({ summary: "x" }),
+            enrich,
+            templateDeps: depsFrom({ "/cfg/prompts/issues/feature.md": ENRICH_TEMPLATE }),
+            tracker,
+        });
+        await newIssue("CG", "feature", deps);
+        const labels = tracker.createCalls[0]?.draft.labels ?? [];
+        expect(labels.filter((l) => l === "feature")).toHaveLength(1);
+        expect(labels).toContain("customer-reported");
     });
 });

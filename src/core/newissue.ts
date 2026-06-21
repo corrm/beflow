@@ -236,6 +236,17 @@ function deriveTitle(template: IssueTemplate, answers: Record<string, string>): 
     return title;
 }
 
+const RESERVED_LABEL_PREFIXES = ["agent", "run", "jobkind"] as const;
+
+function labelPrefix(label: string): string | null {
+    const sep = label.indexOf(":");
+    if (sep === -1) {
+        return null;
+    }
+    const key = label.slice(0, sep);
+    return (RESERVED_LABEL_PREFIXES as readonly string[]).includes(key) ? key : null;
+}
+
 function mapLabels(template: IssueTemplate, extra: string[] = []): string[] {
     const labels = [...(template.labels ?? [])];
     if (template.agent !== undefined) {
@@ -247,7 +258,23 @@ function mapLabels(template: IssueTemplate, extra: string[] = []): string[] {
     if (template.jobKind !== undefined) {
         labels.push(`jobkind:${template.jobKind}`);
     }
-    labels.push(...extra);
+
+    const occupiedNamespaces = new Set<string>();
+    for (const label of labels) {
+        const prefix = labelPrefix(label);
+        if (prefix !== null) {
+            occupiedNamespaces.add(prefix);
+        }
+    }
+
+    for (const label of extra) {
+        const prefix = labelPrefix(label);
+        if (prefix !== null && occupiedNamespaces.has(prefix)) {
+            continue;
+        }
+        labels.push(label);
+    }
+
     const seen = new Set<string>();
     const deduped: string[] = [];
     for (const label of labels) {

@@ -173,7 +173,7 @@ interface CliContext {
 // Builds the CliContext shared by every command that needs a tracker + prompts.
 // Config is loaded here (inside command `run` handlers) rather than in `runCli`
 // so that `--help` — which citty resolves without invoking `run` — works even
-// when ~/beflow/config.json is missing or invalid.
+// when the config at configDir() is missing or invalid.
 function loadContext(deps: CliDeps, log: (msg: string) => void, fail: (msg: string) => number): CliContext {
     const dir = deps.cwd ?? configDir();
     const config = deps.loadConfig(dir);

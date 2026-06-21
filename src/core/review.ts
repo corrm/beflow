@@ -12,7 +12,7 @@ import { resolveRun } from "./run.ts";
 import type { Logger, ResolvedRun } from "./run.ts";
 import { loadRecord, resolveRunsDir, saveRecord, systemClock } from "./runstore.ts";
 import type { Clock, RunStoreFs } from "./runstore.ts";
-import { bunExec, createWorktree, resolveWorktreeDir } from "./worktree.ts";
+import { bunExec, createWorktree, removeWorktree, resolveWorktreeDir } from "./worktree.ts";
 import type { Exec } from "./worktree.ts";
 
 const IN_REVIEW_STATE = "In Review";
@@ -192,75 +192,89 @@ export async function runReview(key: string, deps: RunReviewDeps): Promise<Revie
     const contract = renderReviewContract(deps.prompts, issue, resolved.resolved.repo);
     const maxRunMinutes = deps.registry.projects[projectKeyOf(key)]?.limits?.maxRunMinutes ?? 0;
 
-    let assistantText: string;
     try {
-        await deps.driver.ensureSession(sessionKey, cwd, acpCommand);
-        const result = await deps.driver.run(
+        let assistantText: string;
+        try {
+            await deps.driver.ensureSession(sessionKey, cwd, acpCommand);
+            const result = await deps.driver.run(
+                {
+                    acpCommand,
+                    contract,
+                    cwd,
+                    nonInteractive: "fail",
+                    runMode: "autonomous",
+                    sessionKey,
+                    task: contract,
+                    ...(maxRunMinutes > 0 ? { timeoutSeconds: maxRunMinutes * SECONDS_PER_MINUTE } : {}),
+                },
+                (evt) => {
+                    log(`acpx: ${JSON.stringify(evt)}`);
+                },
+            );
+            assistantText = result.stream.assistantText;
+        } catch (err) {
+            log(`beflow: review ${key} — agent dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
+            return { reason: "dispatch-failed", reviewed: false };
+        }
+
+        const report = extractReviewReport(assistantText);
+        if (report === null) {
+            log(`beflow: review ${key} — agent produced no review block; skipping`);
+            return { reason: "no-report", reviewed: false };
+        }
+
+        const body = formatReviewBody(report);
+        try {
+            await deps.tracker.comment(issue, body);
+        } catch (err) {
+            log(`beflow: review ${key} — issue comment failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+
+        const postToPr = deps.postToPr ?? resolveReviewPostToPr(deps.config, deps.registry, projectKeyOf(key));
+        if (postToPr) {
+            const prCommenter = deps.prCommenter ?? defaultPrComment;
+            try {
+                await prCommenter(prUrl, body);
+            } catch (err) {
+                log(`beflow: review ${key} — PR comment failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        }
+
+        // Record the reviewed head so a later watch pass skips an unchanged PR. Obtain the
+        // SHA from the injected source; fall back to keeping the prior value when unknown.
+        let reviewedSha: string | undefined = record.reviewedSha;
+        if (deps.reviewSha !== undefined) {
+            try {
+                reviewedSha = (await deps.reviewSha(prUrl)) ?? reviewedSha;
+            } catch (err) {
+                log(
+                    `beflow: review ${key} — head SHA lookup failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
+            }
+        }
+        saveRecord(
+            runsDir,
             {
-                acpCommand,
-                contract,
-                cwd,
-                nonInteractive: "fail",
-                runMode: "autonomous",
-                sessionKey,
-                task: contract,
-                ...(maxRunMinutes > 0 ? { timeoutSeconds: maxRunMinutes * SECONDS_PER_MINUTE } : {}),
+                ...record,
+                updatedAt: clock(),
+                ...(reviewedSha !== undefined ? { reviewedSha } : {}),
             },
-            (evt) => {
-                log(`acpx: ${JSON.stringify(evt)}`);
-            },
+            deps.runsFs,
         );
-        assistantText = result.stream.assistantText;
-    } catch (err) {
-        log(`beflow: review ${key} — agent dispatch failed: ${err instanceof Error ? err.message : String(err)}`);
-        return { reason: "dispatch-failed", reviewed: false };
-    }
 
-    const report = extractReviewReport(assistantText);
-    if (report === null) {
-        log(`beflow: review ${key} — agent produced no review block; skipping`);
-        return { reason: "no-report", reviewed: false };
-    }
-
-    const body = formatReviewBody(report);
-    try {
-        await deps.tracker.comment(issue, body);
-    } catch (err) {
-        log(`beflow: review ${key} — issue comment failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-
-    const postToPr = deps.postToPr ?? resolveReviewPostToPr(deps.config, deps.registry, projectKeyOf(key));
-    if (postToPr) {
-        const prCommenter = deps.prCommenter ?? defaultPrComment;
-        try {
-            await prCommenter(prUrl, body);
-        } catch (err) {
-            log(`beflow: review ${key} — PR comment failed: ${err instanceof Error ? err.message : String(err)}`);
+        log(
+            `beflow: review ${key} — posted ${String(report.findings.length)} finding(s)${postToPr ? " (issue + PR)" : ""}`,
+        );
+        return { findings: report.findings.length, reviewed: true };
+    } finally {
+        if (createdWorktree && deps.git !== undefined) {
+            try {
+                await removeWorktree(record.repoPath ?? resolved.resolved.repoPath, cwd, deps.git);
+            } catch (err) {
+                log(
+                    `beflow: review ${key} — worktree cleanup failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
+            }
         }
     }
-
-    // Record the reviewed head so a later watch pass skips an unchanged PR. Obtain the
-    // SHA from the injected source; fall back to keeping the prior value when unknown.
-    let reviewedSha: string | undefined = record.reviewedSha;
-    if (deps.reviewSha !== undefined) {
-        try {
-            reviewedSha = (await deps.reviewSha(prUrl)) ?? reviewedSha;
-        } catch (err) {
-            log(`beflow: review ${key} — head SHA lookup failed: ${err instanceof Error ? err.message : String(err)}`);
-        }
-    }
-    saveRecord(
-        runsDir,
-        {
-            ...record,
-            updatedAt: clock(),
-            ...(reviewedSha !== undefined ? { reviewedSha } : {}),
-        },
-        deps.runsFs,
-    );
-
-    log(
-        `beflow: review ${key} — posted ${String(report.findings.length)} finding(s)${postToPr ? " (issue + PR)" : ""}`,
-    );
-    return { findings: report.findings.length, reviewed: true };
 }

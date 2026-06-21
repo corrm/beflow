@@ -7,6 +7,7 @@ import { extractReviewReport, runReview } from "../src/core/review.ts";
 import type { PrCommenter, RunReviewDeps } from "../src/core/review.ts";
 import type { RunStoreFs } from "../src/core/runstore.ts";
 import { loadRecord, saveRecord } from "../src/core/runstore.ts";
+import type { Exec, ExecResult } from "../src/core/worktree.ts";
 import type { Issue, IssueMeta } from "../src/model/types.ts";
 import type {
     BlockerRef,
@@ -254,6 +255,18 @@ function reviewRecord(fs: RunStoreFs, over: Record<string, unknown> = {}): void 
     );
 }
 
+function fakeGit(over: (args: string[]) => ExecResult = () => ({ code: 0, stderr: "", stdout: "" })): {
+    git: Exec;
+    calls: string[][];
+} {
+    const calls: string[][] = [];
+    const git: Exec = async (_cmd, args) => {
+        calls.push(args);
+        return over(args);
+    };
+    return { calls, git };
+}
+
 function baseDeps(over: Partial<RunReviewDeps> & { tracker: Tracker; driver: AgentDriver }): RunReviewDeps {
     return {
         config,
@@ -367,5 +380,69 @@ describe("runReview", () => {
         const out = await runReview("CG-3", baseDeps({ driver, runsFs: fs, tracker }));
         expect(out).toEqual({ findings: 0, reviewed: true });
         expect(tracker.calls.posted[0]!.body).toContain("No findings");
+    });
+
+    it("removes the worktree it created on the success path", async () => {
+        const tracker = new ReviewTracker({ "CG-3": issue({ key: "CG-3" }) });
+        const { driver } = fakeDriver(REVIEW_BLOCK);
+        const { fs } = memRunsFs();
+        reviewRecord(fs, { cwd: "" });
+        const { calls, git } = fakeGit();
+        const out = await runReview("CG-3", baseDeps({ driver, git, pathExists: () => false, runsFs: fs, tracker }));
+        expect(out).toEqual({ findings: 2, reviewed: true });
+        const removals = calls.filter((args) => args.includes("remove") && args.includes("--force"));
+        expect(removals).toHaveLength(1);
+        expect(removals[0]).toContain("worktree");
+    });
+
+    it("removes the worktree it created even when the agent emits no review block", async () => {
+        const tracker = new ReviewTracker({ "CG-3": issue({ key: "CG-3" }) });
+        const { driver } = fakeDriver("no block here");
+        const { fs } = memRunsFs();
+        reviewRecord(fs, { cwd: "" });
+        const { calls, git } = fakeGit();
+        const out = await runReview("CG-3", baseDeps({ driver, git, pathExists: () => false, runsFs: fs, tracker }));
+        expect(out.reason).toBe("no-report");
+        const removals = calls.filter((args) => args.includes("remove") && args.includes("--force"));
+        expect(removals).toHaveLength(1);
+    });
+
+    it("does NOT remove a reused worktree", async () => {
+        const tracker = new ReviewTracker({ "CG-3": issue({ key: "CG-3" }) });
+        const { driver } = fakeDriver(REVIEW_BLOCK);
+        const { fs } = memRunsFs();
+        reviewRecord(fs);
+        const { calls, git } = fakeGit();
+        await runReview("CG-3", baseDeps({ driver, git, pathExists: () => true, runsFs: fs, tracker }));
+        const removals = calls.filter((args) => args.includes("remove"));
+        expect(removals).toHaveLength(0);
+    });
+
+    it("returns normally and logs when worktree cleanup fails", async () => {
+        const tracker = new ReviewTracker({ "CG-3": issue({ key: "CG-3" }) });
+        const { driver } = fakeDriver(REVIEW_BLOCK);
+        const { fs } = memRunsFs();
+        reviewRecord(fs, { cwd: "" });
+        const { git } = fakeGit((args) =>
+            args.includes("remove")
+                ? { code: 1, stderr: "no such worktree", stdout: "" }
+                : { code: 0, stderr: "", stdout: "" },
+        );
+        const logs: string[] = [];
+        const out = await runReview(
+            "CG-3",
+            baseDeps({
+                driver,
+                git,
+                log: (m) => {
+                    logs.push(m);
+                },
+                pathExists: () => false,
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        expect(out).toEqual({ findings: 2, reviewed: true });
+        expect(logs.some((m) => m.includes("worktree cleanup failed"))).toBe(true);
     });
 });

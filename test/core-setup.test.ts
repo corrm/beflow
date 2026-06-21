@@ -519,16 +519,18 @@ describe("defaultAskProjectSpec single-repo Enter-through flow", () => {
             },
         }));
 
-        const { defaultAskProjectSpec } = await import("../src/core/setup.ts");
-        const { entry, spec } = await defaultAskProjectSpec({ key: "NP", tracker: "plane" });
+        try {
+            const { defaultAskProjectSpec } = await import("../src/core/setup.ts");
+            const { entry, spec } = await defaultAskProjectSpec({ key: "NP", tracker: "plane" });
 
-        expect(spec).toEqual({ identifier: "NP", name: "My App" });
-        expect(entry.name).toBe("My App");
-        expect(entry.root).toBe("/root/new");
-        expect(entry.default_repo).toBe("NP");
-        expect(entry.repos).toEqual({ NP: "/root/new" });
-        expect(entry.module_repo_map).toEqual({});
-
-        mock.restore();
+            expect(spec).toEqual({ identifier: "NP", name: "My App" });
+            expect(entry.name).toBe("My App");
+            expect(entry.root).toBe("/root/new");
+            expect(entry.default_repo).toBe("NP");
+            expect(entry.repos).toEqual({ NP: "/root/new" });
+            expect(entry.module_repo_map).toEqual({});
+        } finally {
+            mock.restore();
+        }
     });
 });

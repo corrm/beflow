@@ -6,6 +6,42 @@ same `cascade` helper in [`src/resolve/precedence.ts`](../src/resolve/precedence
 the first non-`undefined` value in a priority-ordered list wins. Empty string and
 `0` are valid values and do not trigger a fallback; only `undefined` does.
 
+## Unified resolution reference
+
+The table below lists every per-run-resolved property with its full priority
+order and builtin fallback. Cascade rules: the first non-`undefined` value in
+priority order wins. `pr` and `policy` use a **block-level** rule (described
+below the table) rather than a field-level cascade.
+
+| Property           | Priority order (highest → lowest)                                                                              | Builtin / fallback when all sources are `undefined`          |
+| ------------------ | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `agent`            | CLI → `meta.agent` → `project.routing[jobKind]` → `global.routing[jobKind]` → `project.agent` → `global.agent` | `"claude"`                                                   |
+| `runMode`          | CLI → `meta.runMode` → `project.runMode` → `global.runMode`                                                    | `"supervised"`                                               |
+| `jobKind`          | CLI → `meta.jobKind` → `autoDetectJobKind(issue.type, issue.state.group)`                                      | no constant builtin — auto-detection always produces a value |
+| `repo`             | CLI → `meta.repo` → area-derived (`project.module_repo_map[areas[0]]`) → `project.default_repo`                | **throws** — no silent fallback (see [Repo](#repo))          |
+| `pr.owner`         | block-level (see below)                                                                                        | `"agent"`                                                    |
+| `pr.baseBranch`    | block-level (see below)                                                                                        | `"auto"`                                                     |
+| `policy.evaluator` | block-level (see below)                                                                                        | `"off"`                                                      |
+| `policy.onBlock`   | block-level (see below)                                                                                        | `"comment"`                                                  |
+
+### Field-level cascade vs. block-level replacement
+
+`agent`, `runMode`, `jobKind`, and `repo` use a **field-level** cascade: each
+property is resolved independently by walking its own priority list.
+
+`pr` and `policy` use a **block-level** rule: if `projects.<KEY>.pr` is set it
+**replaces** the top-level `pr` block wholesale (no per-field merge). Only
+after the winning block is chosen do the builtins fill fields that remain
+`undefined` within that block. The same applies to `policy`. This means setting
+`projects.MYAPP.pr.owner` also silently discards a top-level `pr.baseBranch`
+(and vice-versa) — override the full block when using project-level `pr` or
+`policy`.
+
+See [PR ownership and policy](pr-ownership-and-policy.md#project-level-overrides)
+for the rationale and examples.
+
+---
+
 ## Sources
 
 Each field can be supplied from up to four sources, in priority order:
@@ -15,7 +51,7 @@ Each field can be supplied from up to four sources, in priority order:
 | `cli`     | Command-line flags passed to [`beflow run`](commands.md#run-key) for this invocation. |
 | `meta`    | Per-issue metadata parsed from the issue body and labels (see below).                 |
 | `project` | The matching project entry in `config.json` (e.g. its `agent` / `runMode` keys).      |
-| `global`  | The top-level keys in `config.json` (e.g. `fileSchema.agent` / `fileSchema.runMode`). |
+| `global`  | The top-level keys in `config.json` (e.g. `agent` / `runMode`).                       |
 
 ### Per-issue metadata (`meta`)
 
@@ -58,7 +94,7 @@ built-in `"claude"`
 
 The built-in `"claude"` fires only when every configured source is `undefined`. In
 practice `global.agent` is always set in `config.json` (it is a required top-level
-field in `fileSchema`), so the built-in is a last-resort safety net.
+field), so the built-in is a last-resort safety net.
 
 ### Routing by job kind (opt-in)
 

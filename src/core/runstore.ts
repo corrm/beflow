@@ -29,7 +29,6 @@ export const runRecordSchema = z.object({
     agent: z.string(),
     attempts: z.number().optional(),
     branch: z.string().optional(),
-    ciAttempts: z.number().optional(),
     ciReworkSha: z.string().optional(),
     cwd: z.string(),
     escalatedAt: z.string().optional(),

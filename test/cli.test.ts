@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AgentDriver, AgentRunResult, RunOptions } from "../src/agent/driver.ts";
 import { runCli } from "../src/cli.ts";
 import type { CliDeps } from "../src/cli.ts";
+import { configDir, configPath } from "../src/config/paths.ts";
 import type { Config, Registry } from "../src/config/schema.ts";
 import type { OpenLaunch } from "../src/core/run.ts";
 import type { RunStoreFs } from "../src/core/runstore.ts";
@@ -771,6 +772,42 @@ describe("runCli doctor", () => {
         deps.onPath = () => true;
         const code = await runCli(["doctor"], deps);
         expect(code).toBe(1);
+    });
+
+    it("doctor with no cwd passes configDir() to loadConfig, not process.cwd()", async () => {
+        const { deps } = harness();
+        let receivedDir: string = "";
+        deps.loadConfig = (dir) => {
+            receivedDir = dir;
+            return config;
+        };
+        deps.fileExists = () => true;
+        deps.onPath = () => true;
+        await runCli(["doctor"], { ...deps, cwd: undefined });
+        expect(receivedDir).toBe(configDir());
+    });
+
+    it("doctor with missing config surfaces the bootstrap message (configPath-keyed path)", async () => {
+        const { deps } = harness();
+        const bootstrapMsg = `beflow: created ${configPath()} from the built-in template — fill in your workspace details and re-run`;
+        deps.loadConfig = (dir) => {
+            if (dir === configDir()) {
+                throw new Error(bootstrapMsg);
+            }
+            throw new Error(`beflow: cannot read config file at ${join(dir, "config.json")}`);
+        };
+        deps.fileExists = () => true;
+        deps.onPath = () => true;
+        const logs: string[] = [];
+        const code = await runCli(["doctor"], {
+            ...deps,
+            cwd: undefined,
+            log: (m) => {
+                logs.push(m);
+            },
+        });
+        expect(code).toBe(1);
+        expect(logs.some((l) => l.includes("from the built-in template"))).toBe(true);
     });
 
     it("--ping runs the injected ping when core checks pass", async () => {

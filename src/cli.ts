@@ -339,7 +339,7 @@ function buildCli(deps: CliDeps): Cli {
         } satisfies ArgsDef as ArgsDef,
         meta: { description: "Diagnose the local beflow environment", name: "doctor" },
         // doctor intentionally runs WITHOUT loadContext so it works with no config.
-        run: async ({ args }) => cmdDoctor({ ping: asBool(args.ping) }, deps, deps.cwd ?? process.cwd(), makeLog(deps)),
+        run: async ({ args }) => cmdDoctor({ ping: asBool(args.ping) }, deps, deps.cwd ?? configDir(), makeLog(deps)),
     });
 
     const gcCmd = defineCommand({

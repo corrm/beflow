@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { defineCommand, runCommand, showUsage } from "citty";
 import type { ArgsDef, CommandContext, CommandDef } from "citty";
@@ -796,6 +796,7 @@ function defaultDoctorFixDeps(deps: CliDeps, dir: string): DoctorFixDeps {
             };
         },
         writeConfig: (path, content) => {
+            mkdirSync(dirname(path), { recursive: true });
             writeFileSync(path, content);
         },
     };

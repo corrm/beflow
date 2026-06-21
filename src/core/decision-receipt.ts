@@ -1,10 +1,11 @@
 import type { Issue, PolicyDecision } from "../model/types.ts";
 import type { Tracker } from "../trackers/tracker.ts";
-import type { DecisionEvent, DecisionSink } from "./decisionlog.ts";
+import type { DecisionEvent, DecisionEvidence, DecisionSink } from "./decisionlog.ts";
 import { renderTemplate } from "./prompts.ts";
 import type { Logger } from "./run.ts";
 
 const FILE_LIST_CAP = 20;
+const SURFACE_NOTES_CAP = 20;
 
 const DECISION_LABELS: Record<PolicyDecision, string> = {
     allow: "ALLOW",
@@ -27,23 +28,53 @@ function composeChangedFilesList(changedFiles: readonly string[]): string {
     return `\n${lines.join("\n")}`;
 }
 
+// Pre-composes the capped, indented surface-notes list from the receipt evidence
+// (leading "\n" so the template drops it inline and stays clean when there are no
+// notes) — mirroring composeChangedFilesList.
+function composeSurfaceNotesList(surfaceNotes: DecisionEvidence["surfaceNotes"]): string {
+    if (surfaceNotes === undefined) {
+        return "";
+    }
+    const entries = Object.entries(surfaceNotes);
+    if (entries.length === 0) {
+        return "";
+    }
+    const shown = entries.slice(0, SURFACE_NOTES_CAP);
+    const lines = shown.map(([surface, note]) => `  - \`${surface}\`: ${note}`);
+    const remaining = entries.length - shown.length;
+    if (remaining > 0) {
+        lines.push(`  - +${String(remaining)} more`);
+    }
+    return `\n${lines.join("\n")}`;
+}
+
 /**
  * The render context for the decision-receipt template: raw event fields plus a
- * couple of pre-composed convenience values (`changedFilesList`, `prLine`) that
- * carry their own leading newline so empty sections vanish cleanly — mirroring
- * `renderContract`'s pre-composition idiom.
+ * handful of pre-composed convenience values (`changedFilesList`, `prLine`, and
+ * the receipt-derived `intentLine` / `riskSurfacesLine` / `surfaceNotesList`)
+ * that carry their own leading newline so empty sections vanish cleanly —
+ * mirroring `renderContract`'s pre-composition idiom.
  */
 export function buildReceiptContext(event: DecisionEvent): Record<string, string> {
+    const intentLine = event.evidence !== undefined ? `\n- Agent intent: ${event.evidence.intent}` : "";
+    const riskSurfacesLine =
+        event.evidence !== undefined && event.evidence.riskSurfaces.length > 0
+            ? `\n- Risk surfaces: ${event.evidence.riskSurfaces.join(", ")}`
+            : "";
+    const surfaceNotesList = event.evidence !== undefined ? composeSurfaceNotesList(event.evidence.surfaceNotes) : "";
     return {
         changedFilesList: composeChangedFilesList(event.changedFiles),
         decision: DECISION_LABELS[event.decision],
         evaluator: event.evaluator,
         fileCount: String(event.changedFiles.length),
+        intentLine,
         key: event.key,
         prLine: event.prUrl !== undefined ? `\n- PR: ${event.prUrl}` : "",
         prUrl: event.prUrl ?? "",
         reason: event.reason,
+        riskSurfacesLine,
         runId: event.runId,
+        surfaceNotesList,
         timestamp: event.timestamp,
     };
 }

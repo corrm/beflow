@@ -233,15 +233,23 @@ Each line is a self-contained `DecisionEvent`:
   "reason": "rule decision=allow paths=src/**",
   "timestamp": "2026-06-20T00:00:00.000Z",
   "changedFilesHash": "…sha256…",
-  "decisionInputHash": "…sha256…"
+  "decisionInputHash": "…sha256…",
+  "evidence": {
+    "intent": "harden token signing",
+    "riskSurfaces": ["app", "auth"],
+    "surfaceNotes": { "auth": "no change to token signing" }
+  }
 }
 ```
 
 `matchedRules` is the structured companion to the flattened `reason` string: it
 carries every rule that fired (its decision and matched paths/globs), not just the
 winner. `changedFilesHash` and `decisionInputHash` are SHA-256 digests that make
-the log tamper-evident for free. `evidence` and `approver` are reserved for a later
-issue and are absent today.
+the log tamper-evident for free. `evidence` captures the agent's self-declared
+`intent`, `riskSurfaces`, and (when present) `surfaceNotes` from its change
+receipt — the reviewer-facing "what/why/risk", which also renders into the
+approval receipt comment; it is absent when the agent emitted no receipt.
+`approver` is reserved for a later issue and is absent today.
 
 The log is **append-only**: beflow never rewrites or truncates it. It is written
 through a `DecisionSink` adapter — a stable interface with swappable

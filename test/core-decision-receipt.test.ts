@@ -8,7 +8,7 @@ import { loadDecisionReceiptPrompt } from "../src/core/prompts.ts";
 import type { PromptResolveDeps } from "../src/core/prompts.ts";
 import { buildDefaultDecisionSink } from "../src/core/run.ts";
 import type { RunStoreFs } from "../src/core/runstore.ts";
-import type { Issue, IssueMeta } from "../src/model/types.ts";
+import type { ChangeReceipt, Issue, IssueMeta } from "../src/model/types.ts";
 import type {
     BlockerRef,
     BoardState,
@@ -195,6 +195,50 @@ describe("buildReceiptContext", () => {
         expect(ctx.prUrl).toBe("");
         expect(ctx.prLine).toBe("");
     });
+
+    it("composes the receipt-derived intent, risk surfaces, and surface notes", () => {
+        const receipt: ChangeReceipt = {
+            intent: "rotate the session secret",
+            riskSurfaces: ["auth", "deps"],
+            surfaceNotes: { auth: "new TTL", deps: "bumps jose" },
+        };
+        const ctx = buildReceiptContext(newEvent({ receipt }));
+        expect(ctx.intentLine).toBe("\n- Agent intent: rotate the session secret");
+        expect(ctx.riskSurfacesLine).toBe("\n- Risk surfaces: auth, deps");
+        expect(ctx.surfaceNotesList).toBe("\n  - `auth`: new TTL\n  - `deps`: bumps jose");
+    });
+
+    it("composes empty receipt values when there is no receipt", () => {
+        const ctx = buildReceiptContext(newEvent());
+        expect(ctx.intentLine).toBe("");
+        expect(ctx.riskSurfacesLine).toBe("");
+        expect(ctx.surfaceNotesList).toBe("");
+    });
+
+    it("omits the risk-surfaces and notes lines for an intent-only receipt", () => {
+        const receipt: ChangeReceipt = { intent: "tidy app code", riskSurfaces: [] };
+        const ctx = buildReceiptContext(newEvent({ receipt }));
+        expect(ctx.intentLine).toBe("\n- Agent intent: tidy app code");
+        expect(ctx.riskSurfacesLine).toBe("");
+        expect(ctx.surfaceNotesList).toBe("");
+    });
+
+    it("caps the surface-notes list at 20 and appends the remaining count", () => {
+        const surfaceNotes: Record<string, string> = {};
+        for (let i = 0; i < 25; i++) {
+            surfaceNotes[`surface-${String(i)}`] = `note ${String(i)}`;
+        }
+        const receipt: ChangeReceipt = {
+            intent: "wide change",
+            riskSurfaces: ["app"],
+            surfaceNotes: surfaceNotes as ChangeReceipt["surfaceNotes"],
+        };
+        const ctx = buildReceiptContext(newEvent({ receipt }));
+        expect(ctx.surfaceNotesList).toContain("note 0");
+        expect(ctx.surfaceNotesList).toContain("note 19");
+        expect(ctx.surfaceNotesList).not.toContain("note 20");
+        expect(ctx.surfaceNotesList).toContain("+5 more");
+    });
 });
 
 describe("formatReceiptBody", () => {
@@ -232,6 +276,36 @@ describe("formatReceiptBody", () => {
     it("renders a custom user template, proving the override mechanism works", () => {
         const body = formatReceiptBody("Decision={{decision}} Files={{fileCount}}", newEvent({ decision: "block" }));
         expect(body).toBe("Decision=BLOCK Files=1");
+    });
+
+    it("surfaces the agent intent, risk surfaces, and notes when a receipt is present", () => {
+        const receipt: ChangeReceipt = {
+            intent: "rotate the session secret",
+            riskSurfaces: ["auth", "deps"],
+            surfaceNotes: { auth: "new TTL" },
+        };
+        const body = formatReceiptBody(defaultTemplate, newEvent({ decision: "require_approval", receipt }));
+        expect(body).toContain("Agent intent: rotate the session secret");
+        expect(body).toContain("Risk surfaces: auth, deps");
+        expect(body).toContain("`auth`: new TTL");
+    });
+
+    it("renders no dangling receipt lines and keeps the prior shape when no receipt is present", () => {
+        const body = formatReceiptBody(defaultTemplate, newEvent());
+        expect(body).not.toContain("Agent intent:");
+        expect(body).not.toContain("Risk surfaces:");
+        expect(body).toBe(
+            [
+                "**Policy decision: ALLOW**",
+                "",
+                "- Evaluator: `globs`",
+                "- Reason: no policy rule matched",
+                "- Changed files: 1",
+                "  - `src/a.ts`",
+                "- PR: https://gh/pr/9",
+                "",
+            ].join("\n"),
+        );
     });
 });
 

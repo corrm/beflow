@@ -155,6 +155,7 @@ export class LocalNdjsonSink implements DecisionSink {
     }
 }
 
+// Durable read path for the decision log; consumed by predictive preflight (BEFLOW-18). Recovers a torn trailing line rather than failing the read.
 /**
  * Read the durable decision log, recovering from a torn trailing line. A write
  * interrupted mid-append leaves a partial last line; that line is skipped while
@@ -188,6 +189,10 @@ function isDecisionEvent(value: unknown): value is DecisionEvent {
     if (typeof value !== "object" || value === null) {
         return false;
     }
-    const record: Record<string, unknown> = { ...value };
-    return typeof record.decisionId === "string" && typeof record.schemaVersion === "number";
+    return (
+        "decisionId" in value &&
+        typeof value.decisionId === "string" &&
+        "schemaVersion" in value &&
+        typeof value.schemaVersion === "number"
+    );
 }

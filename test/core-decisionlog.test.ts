@@ -187,7 +187,7 @@ describe("LocalNdjsonSink (real fs, concurrent writers)", () => {
         rmSync(dir, { force: true, recursive: true });
     });
 
-    it("loses no events under concurrent emits across two sinks on the same file", async () => {
+    it("two sink instances on the same file accumulate, never clobber", async () => {
         const sinkA = new LocalNdjsonSink(dir, nodeRunStoreFs);
         const sinkB = new LocalNdjsonSink(dir, nodeRunStoreFs);
         const count = 100;

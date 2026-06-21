@@ -176,6 +176,7 @@ export async function setupProject(projectKey: string, deps: SetupDeps): Promise
         ((): void => {
             /* no-op: logging disabled */
         });
+    await deps.tracker.verifyAuth();
     if (deps.registry.projects[projectKey] === undefined) {
         const ask = deps.askProjectSpec ?? (process.stdin.isTTY ? defaultAskProjectSpec : undefined);
         if (ask === undefined) {

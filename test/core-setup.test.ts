@@ -60,7 +60,13 @@ class RecordingTracker implements Tracker {
         template: BoardTemplate;
         opts?: EnsureBoardOptions;
     }[] = [];
+    verifyAuthError?: Error;
     constructor(private readonly result: EnsureBoardResult) {}
+    async verifyAuth(): Promise<void> {
+        if (this.verifyAuthError !== undefined) {
+            throw this.verifyAuthError;
+        }
+    }
     async getIssue(): Promise<Issue> {
         throw new Error("unused");
     }
@@ -307,6 +313,50 @@ describe("setupProject", () => {
 
         expect(tracker.createProjectCalls).toHaveLength(0);
         expect(persistCalls).toHaveLength(0);
+    });
+
+    it("fails fast when verifyAuth rejects, before any walkthrough or project create", async () => {
+        const tracker = new RecordingTracker({
+            created: [],
+            orphans: [],
+            pruned: [],
+            skipped: [],
+            updated: [],
+            warnings: [],
+        });
+        tracker.verifyAuthError = new Error("beflow: Plane token invalid");
+        const localRegistry: Registry = {
+            projects: {},
+            workspace: { id: "w", slug: "your-workspace" },
+        };
+        let askCalls = 0;
+        const cannedEntry: Project = {
+            default_repo: "bin",
+            module_repo_map: {},
+            name: "NewProj",
+            repos: { bin: "/repo/bin" },
+            root: "/root/new",
+        };
+        const askProjectSpec: AskProjectSpec = async () => {
+            askCalls += 1;
+            return { entry: { ...cannedEntry }, spec: { identifier: "NP", name: "NewProj" } };
+        };
+
+        expect(
+            setupProject("NP", {
+                agents: ["claude"],
+                askProjectSpec,
+                persist: () => {},
+                registry: localRegistry,
+                scaffoldFs: memScaffoldFs(),
+                tracker,
+                trackerName: "plane",
+            }),
+        ).rejects.toThrow(/Plane token invalid/);
+
+        expect(askCalls).toBe(0);
+        expect(tracker.createProjectCalls).toHaveLength(0);
+        expect(tracker.ensureBoardCalls).toHaveLength(0);
     });
 
     it("leaves the create path untouched for an existing key", async () => {

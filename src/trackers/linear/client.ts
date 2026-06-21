@@ -20,6 +20,7 @@ export interface CreateIssueInput {
 // LinearSdkGateway; the adapter + mappers depend on this interface so tests
 // Can supply a fake without touching @linear/sdk or the network.
 export interface LinearGateway {
+    verifyAuth(): Promise<void>; // cheap authenticated probe; rejects when the token is invalid
     getIssueByIdentifier(identifier: string): Promise<RawIssue>;
     getBlockers(issueId: string): Promise<RawBlocker[]>;
     createIssue(teamKey: string, input: CreateIssueInput): Promise<RawIssue>;
@@ -103,6 +104,10 @@ export class LinearSdkGateway implements LinearGateway {
         }
         this.teamIdByKey.set(teamKey, team.id);
         return team.id;
+    }
+
+    public async verifyAuth(): Promise<void> {
+        await this.client.viewer;
     }
 
     public async getIssueByIdentifier(identifier: string): Promise<RawIssue> {

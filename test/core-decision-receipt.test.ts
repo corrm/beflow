@@ -124,6 +124,7 @@ class RecordingTracker implements Tracker {
     public async createProject(): Promise<ProjectCreateResult> {
         return {};
     }
+    public async verifyAuth(): Promise<void> {}
 }
 
 function memFs(): { fs: RunStoreFs; store: Map<string, string> } {

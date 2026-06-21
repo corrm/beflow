@@ -1,3 +1,4 @@
+import { configPath } from "../../config/paths.ts";
 import type { Config, Registry } from "../../config/schema.ts";
 import type { Issue, IssueMeta } from "../../model/types.ts";
 import { parseIssueMeta } from "../../resolve/metadata.ts";
@@ -44,16 +45,19 @@ interface ProjectCaches {
 export interface PlaneTrackerOptions {
     client: PlaneClient;
     registry: Registry;
+    auth: { workspaceSlug: string; apiKeyEnv: string };
 }
 
 export class PlaneTracker implements Tracker {
     private readonly client: PlaneClient;
     private readonly registry: Registry;
+    private readonly auth: { workspaceSlug: string; apiKeyEnv: string };
     private readonly caches = new Map<string, ProjectCaches>();
 
     public constructor(options: PlaneTrackerOptions) {
         this.client = options.client;
         this.registry = options.registry;
+        this.auth = options.auth;
     }
 
     private resolveProjectKey(key: string): ProjectRef {
@@ -718,6 +722,24 @@ export class PlaneTracker implements Tracker {
         }
     }
 
+    public async verifyAuth(): Promise<void> {
+        if (this.auth.workspaceSlug === "your-workspace") {
+            throw new Error(
+                `beflow: Plane workspace is still the placeholder "your-workspace" — edit workspaceSlug + workspace in ${configPath()} and set ${this.auth.apiKeyEnv}, then re-run`,
+            );
+        }
+        try {
+            await this.client.getMe();
+        } catch (err) {
+            if (err instanceof PlaneHttpError && (err.status === 401 || err.status === 403)) {
+                throw new Error(
+                    `beflow: Plane token invalid for workspace "${this.auth.workspaceSlug}" — check ${this.auth.apiKeyEnv} and workspaceSlug in ${configPath()}`,
+                );
+            }
+            throw err;
+        }
+    }
+
     public async createProject(spec: ProjectCreateSpec): Promise<ProjectCreateResult> {
         const created = await this.client.createProject({ identifier: spec.identifier, name: spec.name });
         return { trackerProjectId: created.id };
@@ -750,5 +772,9 @@ export function createPlaneTracker(
         workspaceSlug: planeConfig.workspaceSlug,
     });
 
-    return new PlaneTracker({ client, registry });
+    return new PlaneTracker({
+        auth: { apiKeyEnv: planeConfig.apiKeyEnv, workspaceSlug: planeConfig.workspaceSlug },
+        client,
+        registry,
+    });
 }

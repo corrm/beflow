@@ -178,6 +178,7 @@ class FakeTracker implements Tracker {
     async createProject(): Promise<ProjectCreateResult> {
         throw new Error("not implemented");
     }
+    async verifyAuth(): Promise<void> {}
 }
 
 interface EnsureCall {

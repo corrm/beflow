@@ -34,6 +34,7 @@ interface Call {
 interface FakeOptions {
     issue?: RawIssue;
     issueError?: Error;
+    verifyAuthError?: Error;
     issues?: RawIssue[];
     triage?: RawIssue[];
     states?: RawWorkflowState[];
@@ -47,6 +48,12 @@ function fakeGateway(opts: FakeOptions = {}) {
     const calls: Call[] = [];
 
     const gateway: LinearGateway = {
+        verifyAuth: async () => {
+            calls.push({ op: "verifyAuth", args: [] });
+            if (opts.verifyAuthError !== undefined) {
+                throw opts.verifyAuthError;
+            }
+        },
         createAttachment: async (issueId, url, title) => {
             calls.push({ op: "createAttachment", args: [issueId, url, title] });
         },
@@ -119,7 +126,7 @@ function fakeGateway(opts: FakeOptions = {}) {
 
 function tracker(opts: FakeOptions = {}) {
     const { gateway, calls } = fakeGateway(opts);
-    return { calls, tracker: new LinearTracker({ gateway, registry }) };
+    return { calls, tracker: new LinearTracker({ apiKeyEnv: "LINEAR_API_KEY", gateway, registry }) };
 }
 
 const STATES: RawWorkflowState[] = [
@@ -594,6 +601,19 @@ describe("LinearTracker.createProject", () => {
         const call = calls.find((c) => c.op === "createTeam")!;
         expect(call.args[0]).toEqual({ key: "NP", name: "New Project" });
         expect(result).toEqual({ trackerProjectId: "team-new" });
+    });
+});
+
+describe("LinearTracker.verifyAuth", () => {
+    it("resolves when the gateway probe succeeds", async () => {
+        const { tracker: t, calls } = tracker();
+        await t.verifyAuth();
+        expect(calls.some((c) => c.op === "verifyAuth")).toBe(true);
+    });
+
+    it("throws an actionable error naming the env var when the gateway probe rejects", () => {
+        const { tracker: t } = tracker({ verifyAuthError: new Error("401 unauthorized") });
+        expect(t.verifyAuth()).rejects.toThrow(/Linear token invalid.*LINEAR_API_KEY/s);
     });
 });
 

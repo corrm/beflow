@@ -55,6 +55,7 @@ function fakeTracker(comments: Comment[]): Tracker {
         readMetadata: (issue: Issue): IssueMeta => issue.meta,
         removeProperty: notImpl,
         updateState: notImpl,
+        verifyAuth: async () => {},
     };
 }
 

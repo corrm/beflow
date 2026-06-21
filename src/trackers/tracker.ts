@@ -132,4 +132,5 @@ export interface Tracker {
     inspectBoard(project: string): Promise<BoardState>;
     ensureBoard(project: string, template: BoardTemplate, opts?: EnsureBoardOptions): Promise<EnsureBoardResult>;
     createProject(spec: ProjectCreateSpec): Promise<ProjectCreateResult>;
+    verifyAuth(): Promise<void>; // cheap auth probe; resolves when the token is valid, throws a clear, actionable error otherwise
 }

@@ -2,6 +2,12 @@ export interface RawProject {
     id: string;
 }
 
+export interface RawUser {
+    id: string;
+    email?: string;
+    display_name?: string;
+}
+
 export interface Paginated<T> {
     next_cursor: string;
     prev_cursor: string;

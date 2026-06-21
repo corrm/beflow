@@ -11,6 +11,7 @@ import type {
     RawProject,
     RawState,
     RawWorkItem,
+    RawUser,
     RawWorkItemRelations,
     RawWorkItemType,
 } from "./types.ts";
@@ -144,6 +145,10 @@ export class PlaneClient {
             cursor = page.next_cursor;
         }
         return results;
+    }
+
+    public async getMe(): Promise<RawUser> {
+        return this.request<RawUser>("GET", "/api/v1/users/me/");
     }
 
     public async createProject(body: { identifier: string; name: string }): Promise<RawProject> {

@@ -62,4 +62,16 @@ describe("stripMarker", () => {
     it("handles the marker embedded in multi-paragraph text", () => {
         expect(stripMarker("para one\n\npara two\n\n— beflow")).toBe("para one\n\npara two");
     });
+
+    it("strips a marker with no leading whitespace (HTML-strip fallback path)", () => {
+        expect(stripMarker("line1line2— beflow")).toBe("line1line2");
+    });
+
+    it("strips a marker preceded by a single newline", () => {
+        expect(stripMarker("body\n— beflow")).toBe("body");
+    });
+
+    it("strips only the last occurrence, leaving earlier quoted marker text intact", () => {
+        expect(stripMarker("quoting: — beflow\n\nreply\n\n— beflow")).toBe("quoting: — beflow\n\nreply");
+    });
 });

@@ -1,5 +1,5 @@
 **Policy decision: {{decision}}**
 
 - Evaluator: `{{evaluator}}`
-- Reason: {{reason}}
+- Reason: {{reason}}{{intentLine}}{{riskSurfacesLine}}{{surfaceNotesList}}
 - Changed files: {{fileCount}}{{changedFilesList}}{{prLine}}

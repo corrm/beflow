@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
 
 import { xdgStateHome } from "../config/xdg.ts";
-import type { PolicyDecision } from "../model/types.ts";
+import type { ChangeReceipt, PolicyDecision, RiskSurface } from "../model/types.ts";
 import type { MatchedRule } from "./policy.ts";
 import type { RunStoreFs } from "./runstore.ts";
 import { nodeRunStoreFs } from "./runstore.ts";
@@ -11,10 +11,21 @@ import { expandHome } from "./worktree.ts";
 const SCHEMA_VERSION = 1;
 
 /**
+ * The human-legible receipt subset carried into the durable event: what the agent
+ * said it was doing and which surfaces it touched. The reviewer-facing "what/why/
+ * risk" — testsRun/uncertainty/nextDecision stay out of the audit record.
+ */
+export interface DecisionEvidence {
+    intent: string;
+    riskSurfaces: RiskSurface[];
+    surfaceNotes?: Partial<Record<RiskSurface, string>>;
+}
+
+/**
  * The canonical, durable record of one post-run policy decision. Designed as a
  * self-contained EVENT so an external sink (object storage, SIEM) is a pure later
- * drop-in: the shape never depends on where it is written. `evidence` and
- * `approver` are reserved for receipt-aware population in a later issue.
+ * drop-in: the shape never depends on where it is written. `approver` is reserved
+ * for receipt-aware population in a later issue.
  */
 export interface DecisionEvent {
     schemaVersion: number;
@@ -32,7 +43,7 @@ export interface DecisionEvent {
     changedFilesHash: string;
     /** SHA-256 over the decision inputs (key, decision, evaluator, rules, files). */
     decisionInputHash: string;
-    evidence?: unknown;
+    evidence?: DecisionEvidence;
     approver?: string;
 }
 
@@ -108,6 +119,7 @@ export interface NewDecisionEvent {
     matchedRules: MatchedRule[];
     changedFiles: string[];
     reason: string;
+    receipt?: ChangeReceipt;
 }
 
 /** Build a complete `DecisionEvent`, deriving the ids, hashes, and timestamp. */
@@ -116,6 +128,14 @@ export function buildDecisionEvent(
     now: () => string,
     decisionId: () => string = randomUUID,
 ): DecisionEvent {
+    const evidence =
+        input.receipt !== undefined
+            ? {
+                  intent: input.receipt.intent,
+                  riskSurfaces: input.receipt.riskSurfaces,
+                  ...(input.receipt.surfaceNotes !== undefined ? { surfaceNotes: input.receipt.surfaceNotes } : {}),
+              }
+            : undefined;
     return {
         changedFiles: input.changedFiles,
         changedFilesHash: hashChangedFiles(input.changedFiles),
@@ -130,6 +150,7 @@ export function buildDecisionEvent(
         schemaVersion: SCHEMA_VERSION,
         timestamp: now(),
         ...(input.prUrl !== undefined ? { prUrl: input.prUrl } : {}),
+        ...(evidence !== undefined ? { evidence } : {}),
     };
 }
 

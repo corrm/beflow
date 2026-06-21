@@ -15,6 +15,7 @@ import {
 import type { NewDecisionEvent } from "../src/core/decisionlog.ts";
 import { nodeRunStoreFs } from "../src/core/runstore.ts";
 import type { RunStoreFs } from "../src/core/runstore.ts";
+import type { ChangeReceipt } from "../src/model/types.ts";
 
 function memFs(): { fs: RunStoreFs; store: Map<string, string> } {
     const store = new Map<string, string>();
@@ -136,6 +137,35 @@ describe("buildDecisionEvent", () => {
         const block = buildDecisionEvent(newEvent({ decision: "block" }), fixedClock, fixedId);
         expect(allow.decisionInputHash).not.toBe(block.decisionInputHash);
     });
+
+    it("derives evidence (intent + risk surfaces + notes) from a supplied receipt", () => {
+        const receipt: ChangeReceipt = {
+            intent: "wire the auth adapter",
+            riskSurfaces: ["auth", "deps"],
+            surfaceNotes: { auth: "rotates the session secret" },
+            testsRun: ["bun test"],
+            uncertainty: "token TTL unconfirmed",
+            nextDecision: "ship after review",
+        };
+        const event = buildDecisionEvent(newEvent({ receipt }), fixedClock, fixedId);
+        expect(event.evidence).toEqual({
+            intent: "wire the auth adapter",
+            riskSurfaces: ["auth", "deps"],
+            surfaceNotes: { auth: "rotates the session secret" },
+        });
+    });
+
+    it("omits surfaceNotes from evidence when the receipt has none", () => {
+        const receipt: ChangeReceipt = { intent: "tidy app code", riskSurfaces: ["app"] };
+        const event = buildDecisionEvent(newEvent({ receipt }), fixedClock, fixedId);
+        expect(event.evidence).toEqual({ intent: "tidy app code", riskSurfaces: ["app"] });
+        expect("surfaceNotes" in (event.evidence ?? {})).toBe(false);
+    });
+
+    it("omits the evidence key entirely when no receipt is provided", () => {
+        const event = buildDecisionEvent(newEvent(), fixedClock, fixedId);
+        expect("evidence" in event).toBe(false);
+    });
 });
 
 describe("LocalNdjsonSink", () => {
@@ -147,6 +177,24 @@ describe("LocalNdjsonSink", () => {
         const written = lines(store, "/decisions");
         expect(written).toHaveLength(1);
         expect(written[0]).toEqual(event);
+    });
+
+    it("round-trips the derived evidence through write + read", async () => {
+        const receipt: ChangeReceipt = {
+            intent: "wire the auth adapter",
+            riskSurfaces: ["auth"],
+            surfaceNotes: { auth: "rotates the session secret" },
+        };
+        const { fs } = memFs();
+        const sink = new LocalNdjsonSink("/decisions", fs);
+        const event = buildDecisionEvent(newEvent({ receipt }), fixedClock, fixedId);
+        await sink.emit(event);
+        const [read] = readDecisionEvents("/decisions", fs);
+        expect(read?.evidence).toEqual({
+            intent: "wire the auth adapter",
+            riskSurfaces: ["auth"],
+            surfaceNotes: { auth: "rotates the session secret" },
+        });
     });
 
     it("appends (does not overwrite): successive emits accumulate in order", async () => {

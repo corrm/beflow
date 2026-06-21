@@ -986,6 +986,7 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                     prUrl: openedPr.url,
                     reason: decision.reason,
                     runId: `${key}@${record.updatedAt}`,
+                    ...(result.report.receipt !== undefined ? { receipt: result.report.receipt } : {}),
                 },
                 clock,
             ),

@@ -61,6 +61,9 @@ Its placeholders, supplied by `buildReceiptContext`:
 | `{{decision}}`         | The decision label: `ALLOW`, `BLOCK`, or `REQUIRE APPROVAL`.                                                                                   |
 | `{{evaluator}}`        | The policy evaluator that produced the decision.                                                                                               |
 | `{{reason}}`           | The human-readable reason for the decision.                                                                                                    |
+| `{{intentLine}}`       | Pre-composed `- Agent intent: <intent>` line with a leading newline from the agent's change receipt, or `""` when no receipt was emitted.      |
+| `{{riskSurfacesLine}}` | Pre-composed `- Risk surfaces: <list>` line with a leading newline, or `""` when there is no receipt or no risk surfaces.                      |
+| `{{surfaceNotesList}}` | Pre-composed, indented list of per-surface notes (capped at 20, `+N more` beyond); a leading newline when non-empty, `""` otherwise.           |
 | `{{fileCount}}`        | The number of changed files.                                                                                                                   |
 | `{{changedFilesList}}` | Pre-composed, indented list of changed files (capped at 20, `+N more` beyond); a leading newline when non-empty, `""` when there are no files. |
 | `{{prLine}}`           | Pre-composed `- PR: <url>` line with a leading newline, or `""` when there is no PR.                                                           |

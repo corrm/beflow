@@ -13,7 +13,13 @@ import type { Comment, Tracker } from "../trackers/tracker.ts";
 import { renderContinuation } from "./continuation.ts";
 import { TrackerCommentSink } from "./decision-receipt.ts";
 import { DECISION_HOLD_MESSAGE, isDecisionHeld } from "./decision.ts";
-import { buildDecisionEvent, CompositeSink, LocalNdjsonSink, resolveDecisionsDir } from "./decisionlog.ts";
+import {
+    buildDecisionEvent,
+    CompositeSink,
+    LocalNdjsonSink,
+    readDecisionEvents,
+    resolveDecisionsDir,
+} from "./decisionlog.ts";
 import type { DecisionSink } from "./decisionlog.ts";
 import { isThinIssue, resolveMinBodyChars, THIN_ISSUE_MESSAGE } from "./inputquality.ts";
 import { injectAcpxMcp, nodeMcpFs } from "./mcp.ts";
@@ -24,7 +30,12 @@ import { computeChangedFiles, defaultPolicyExec, defaultPolicyReader, evaluatePo
 import type { PolicyExec, PolicyReader, PolicyResult } from "./policy.ts";
 import { closePr, detectBaseBranch, editPr, hasCommits, markReady, openDraftPr } from "./pr.ts";
 import type { PrRef } from "./pr.ts";
-import { derivePreflightPaths, PREFLIGHT_BLOCK_MESSAGE } from "./preflight.ts";
+import {
+    derivePreflightPaths,
+    findHistoricalOverlaps,
+    formatHistoricalOverlap,
+    PREFLIGHT_BLOCK_MESSAGE,
+} from "./preflight.ts";
 import type { PromptResolveDeps, PromptSet } from "./prompts.ts";
 import { loadDecisionReceiptPrompt, renderContract, renderLinkedContext, renderTask } from "./prompts.ts";
 import {
@@ -475,6 +486,20 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                             timedOut: false,
                         },
                     };
+                }
+
+                // PREDICTIVE PREFLIGHT (advisory; BEFLOW-18): the live gate above is
+                // Authoritative — this never blocks. Consult the durable decision log and,
+                // When the declared scope overlaps paths a PRIOR run in the SAME project sent
+                // To block/require_approval, log a heads-up and proceed. Project scoping lives
+                // Here (not in preflight.ts) to avoid a run.ts import cycle. A missing/partial
+                // Log yields [] from readDecisionEvents, so this degrades to a no-op.
+                const decisionDir = resolveDecisionsDir(deps.config.decisions?.dir);
+                const events = readDecisionEvents(decisionDir, deps.runsFs);
+                const project = projectKeyOf(key);
+                const scopedEvents = events.filter((event) => projectKeyOf(event.key) === project);
+                for (const overlap of findHistoricalOverlaps(scopedEvents, coarsePaths)) {
+                    log(formatHistoricalOverlap(overlap, key));
                 }
             }
         }

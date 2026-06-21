@@ -7,6 +7,7 @@ import type { AgentDriver, AgentRunResult, RunOptions } from "../src/agent/drive
 import type { Usage } from "../src/agent/events.ts";
 import type { Report } from "../src/agent/report.ts";
 import type { Config, Registry } from "../src/config/schema.ts";
+import { buildDecisionEvent, resolveDecisionsDir } from "../src/core/decisionlog.ts";
 import type { DecisionEvent, DecisionSink } from "../src/core/decisionlog.ts";
 import type { McpFs, McpServer } from "../src/core/mcp.ts";
 import type { NotifyEvent } from "../src/core/notify.ts";
@@ -33,7 +34,7 @@ import type {
 import type { Clock, RunRecord, RunStoreFs } from "../src/core/runstore.ts";
 import { runRecordSchema, saveRecord } from "../src/core/runstore.ts";
 import type { Exec, ExecResult } from "../src/core/worktree.ts";
-import type { Issue, IssueMeta } from "../src/model/types.ts";
+import type { Issue, IssueMeta, PolicyDecision } from "../src/model/types.ts";
 import type {
     BlockerRef,
     BoardState,
@@ -1746,6 +1747,110 @@ describe("runIssue", () => {
             expect(calls.some((c) => c.includes("add"))).toBe(false);
             // The AGENTOWNERS file is read from the BASE repo (exists pre-worktree).
             expect(readPaths.some((p) => p.startsWith("/repo/bin"))).toBe(true);
+        });
+
+        // The predictive preflight reads the durable decision log through the SAME fake
+        // Fs the run uses; this config points it at a known dir so seeded events are read.
+        const predictiveConfig: Config = { ...autonomousConfig, decisions: { dir: "/decisions" } };
+
+        function seedDecision(fs: RunStoreFs, key: string, decision: PolicyDecision, changedFiles: string[]): void {
+            const event = buildDecisionEvent(
+                { changedFiles, decision, evaluator: "globs", key, matchedRules: [], reason: "r", runId: `${key}@t` },
+                fixedClock,
+                () => `d-${key}`,
+            );
+            fs.append(join(resolveDecisionsDir("/decisions"), "decisions.ndjson"), `${JSON.stringify(event)}\n`);
+        }
+
+        it("WARNS (advisory) and PROCEEDS when declared scope overlaps a prior block in the same project", async () => {
+            const tracker = new FakeTracker(declaringIssue("Rotate the secrets in infra/secrets.tf for the deploy."));
+            const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
+            const { git, calls } = fakeGit();
+            const { fs } = memRunsFs();
+            seedDecision(fs, "CG-7", "block", ["infra/secrets.tf"]);
+            const logs: string[] = [];
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    config: predictiveConfig,
+                    driver,
+                    git,
+                    log: (m) => {
+                        logs.push(m);
+                    },
+                    // No active rule on this path, so the live gate ALLOWS — only history warns.
+                    registry: policyRegistry({ evaluator: "globs", rules: [] }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            // Advisory only: the run proceeds (worktree created, agent ran) — never parked.
+            expect(result.parked).toBeUndefined();
+            expect(seen).toHaveLength(1);
+            expect(calls.some((c) => c.includes("add"))).toBe(true);
+            const warning = logs.find((m) => m.includes("heads up"));
+            expect(warning).toBeDefined();
+            expect(warning).toContain("CG-7: infra/secrets.tf");
+            expect(warning).toContain("the live policy gate remains authoritative");
+        });
+
+        it("does not warn when there is no overlapping prior decision", async () => {
+            const tracker = new FakeTracker(declaringIssue("Rotate the secrets in infra/secrets.tf for the deploy."));
+            const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
+            const { git } = fakeGit();
+            const { fs } = memRunsFs();
+            seedDecision(fs, "CG-7", "block", ["src/unrelated.ts"]);
+            const logs: string[] = [];
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    config: predictiveConfig,
+                    driver,
+                    git,
+                    log: (m) => {
+                        logs.push(m);
+                    },
+                    registry: policyRegistry({ evaluator: "globs", rules: [] }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            expect(result.parked).toBeUndefined();
+            expect(seen).toHaveLength(1);
+            expect(logs.some((m) => m.includes("heads up"))).toBe(false);
+        });
+
+        it("does not warn for a prior decision in a DIFFERENT project over the same path", async () => {
+            const tracker = new FakeTracker(declaringIssue("Rotate the secrets in infra/secrets.tf for the deploy."));
+            const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
+            const { git } = fakeGit();
+            const { fs } = memRunsFs();
+            // Same overlapping path, but a different project key — must be scoped out.
+            seedDecision(fs, "OTHER-7", "block", ["infra/secrets.tf"]);
+            const logs: string[] = [];
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    config: predictiveConfig,
+                    driver,
+                    git,
+                    log: (m) => {
+                        logs.push(m);
+                    },
+                    registry: policyRegistry({ evaluator: "globs", rules: [] }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            expect(result.parked).toBeUndefined();
+            expect(seen).toHaveLength(1);
+            expect(logs.some((m) => m.includes("heads up"))).toBe(false);
         });
     });
 

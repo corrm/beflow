@@ -155,7 +155,7 @@ export class LocalNdjsonSink implements DecisionSink {
     }
 }
 
-// Durable read path for the decision log; consumed by predictive preflight (BEFLOW-18). Recovers a torn trailing line rather than failing the read.
+// Durable read path for the decision log. Wired into the predictive preflight (BEFLOW-18): the pre-worktree preflight reads it to emit an advisory overlap warning. Recovers a torn trailing line rather than failing the read.
 /**
  * Read the durable decision log, recovering from a torn trailing line. A write
  * interrupted mid-append leaves a partial last line; that line is skipped while

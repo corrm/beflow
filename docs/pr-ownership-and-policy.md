@@ -131,6 +131,24 @@ declares. An issue that hides its blast radius in prose will sail past it and be
 caught by the authoritative post-run gate instead. The preflight never _weakens_
 that gate; it only short-circuits the unambiguous cases early.
 
+### Predictive overlap warning (advisory)
+
+On the proceed path — after the block short-circuit, when the declared scope is
+about to be allowed through — the preflight also looks **backward**. It reads the
+[decision log](#decision-log) and, when the issue's declared paths exactly overlap
+paths a **prior** run in the **same project** sent to `block` or
+`require_approval`, it logs a heads-up such as:
+
+```
+beflow: APP-42 — heads up: declared scope overlaps paths a prior run sent to block (APP-7: infra/secrets.tf); proceeding — the live policy gate remains authoritative
+```
+
+This is purely **advisory** — it **never** blocks or parks. The live policy gate
+stays authoritative; history only surfaces a warning. Matching is exact on
+repo-relative paths (no fuzzy / directory-prefix matching), it is scoped to the
+current project, and lookback is bounded to recent history. A missing or partial
+log simply yields no warning.
+
 ---
 
 ## Policy outcomes

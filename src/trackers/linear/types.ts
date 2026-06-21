@@ -30,6 +30,12 @@ export interface RawBlocker {
     stateType: string; // workflow state type: completed/cancelled ⇒ done
 }
 
+export interface RawAttachment {
+    id: string;
+    url: string;
+    title: string;
+}
+
 // A Linear issue with its async sub-fields already resolved by the gateway.
 export interface RawIssue {
     id: string;

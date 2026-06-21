@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { xdgStateHome } from "../config/xdg.ts";
 import type { PolicyDecision } from "../model/types.ts";
 import type { MatchedRule } from "./policy.ts";
 import type { RunStoreFs } from "./runstore.ts";
@@ -62,9 +62,9 @@ export class CompositeSink implements DecisionSink {
     }
 }
 
-/** Resolve the decision-log base dir: a sibling of the runs dir under `~/.beflow`. */
+/** Resolve the decision-log base dir: a sibling of the runs dir under the XDG state home. */
 export function resolveDecisionsDir(configured?: string): string {
-    return configured !== undefined ? expandHome(configured) : join(homedir(), ".beflow", "decisions");
+    return configured !== undefined ? expandHome(configured) : join(xdgStateHome(), "decisions");
 }
 
 function sha256(value: string): string {

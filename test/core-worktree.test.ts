@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { xdgDataHome } from "../src/config/xdg.ts";
 import {
     createWorktree,
     expandHome,
@@ -52,8 +53,8 @@ describe("expandHome", () => {
 });
 
 describe("resolveWorktreeDir", () => {
-    it("defaults to ~/.beflow/worktrees when unconfigured", () => {
-        expect(resolveWorktreeDir()).toBe(join(homedir(), ".beflow", "worktrees"));
+    it("defaults under the XDG data home when unconfigured", () => {
+        expect(resolveWorktreeDir()).toBe(join(xdgDataHome(), "worktrees"));
     });
     it("expands and uses a configured dir", () => {
         expect(resolveWorktreeDir("~/wt")).toBe(join(homedir(), "wt"));

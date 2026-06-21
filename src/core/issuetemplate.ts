@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
+import { xdgConfigHome } from "../config/xdg.ts";
 import bugDefault from "../prompts/defaults/issues/bug.md" with { type: "text" };
 import featureDefault from "../prompts/defaults/issues/feature.md" with { type: "text" };
 import genericDefault from "../prompts/defaults/issues/generic.md" with { type: "text" };
@@ -118,13 +119,13 @@ function parseTemplate(name: string, raw: string): IssueTemplate {
 }
 
 // Candidate dirs, highest priority first: project-local (beside config.json),
-// the configured prompts.dir/issues, then ~/.beflow/prompts/issues.
+// the configured prompts.dir/issues, then $XDG_CONFIG_HOME/beflow/prompts/issues.
 function candidateDirs(deps: IssueTemplateResolveDeps): string[] {
     const dirs: string[] = [join(deps.configDir, "prompts", "issues")];
     if (deps.promptsDir !== undefined) {
         dirs.push(join(expandHome(deps.promptsDir, deps.home), "issues"));
     }
-    dirs.push(join(deps.home, ".beflow", "prompts", "issues"));
+    dirs.push(join(xdgConfigHome(), "prompts", "issues"));
     return dirs;
 }
 

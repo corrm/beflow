@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { xdgStateHome } from "../src/config/xdg.ts";
 import {
     deleteRecord,
     listRecords,
@@ -214,8 +215,8 @@ describe("nodeRunStoreFs.append (real fs)", () => {
 });
 
 describe("resolveRunsDir", () => {
-    it("defaults to ~/.beflow/runs when unconfigured", () => {
-        expect(resolveRunsDir()).toBe(join(homedir(), ".beflow", "runs"));
+    it("defaults under the XDG state home when unconfigured", () => {
+        expect(resolveRunsDir()).toBe(join(xdgStateHome(), "runs"));
     });
     it("expands and uses a configured dir", () => {
         expect(resolveRunsDir("~/runs")).toBe(join(homedir(), "runs"));

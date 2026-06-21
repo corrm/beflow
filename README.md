@@ -83,9 +83,9 @@ bun run build          # optional: compile a standalone ./dist/beflow binary
 #           [System.Environment]::SetEnvironmentVariable("PLANE_API_KEY","your_token","User")
 # Use LINEAR_API_KEY instead if you are on Linear.
 
-# 2. Check your setup — creates ~/beflow/config.json on first run
+# 2. Check your setup — creates $XDG_CONFIG_HOME/beflow/config.json (fallback ~/.config/beflow/config.json) on first run
 beflow doctor
-# Open ~/beflow/config.json, fill in your workspace slug, project IDs, and repo paths, then re-run.
+# Open that config.json, fill in your workspace slug, project IDs, and repo paths, then re-run.
 
 # 3. Provision the board (creates the tracker project if it doesn't exist)
 beflow setup <KEY>     # <KEY> is the project key in your config (e.g. APP, BE, WEB)
@@ -172,11 +172,20 @@ Full details — flags, examples, behavior — in the
 
 ## Configuration
 
-beflow reads its configuration from `~/beflow/config.json` — the tracker
-connection, your workspace + project registry, agent definitions, and global
-defaults. Running `beflow doctor` creates the file automatically on first run —
-open it, fill in your workspace details, and re-run. See
+beflow reads its configuration from `$XDG_CONFIG_HOME/beflow/config.json`
+(fallback `~/.config/beflow/config.json`) — the tracker connection, your
+workspace + project registry, agent definitions, and global defaults. Running
+`beflow doctor` creates the file automatically on first run — open it, fill in
+your workspace details, and re-run. See
 [`config.example.json`](config.example.json) for a complete reference.
+
+> **Breaking (pre-release):** on-disk paths moved to the
+> [XDG Base Directory](https://specifications.freedesktop.org/basedir-spec/latest/)
+> layout — config under `$XDG_CONFIG_HOME/beflow`, resumable state (runs,
+> decisions) under `$XDG_STATE_HOME/beflow`, worktrees under
+> `$XDG_DATA_HOME/beflow`. Any old `~/beflow` / `~/.beflow` directories are
+> orphaned; re-run `beflow doctor` to bootstrap a fresh config at the new
+> location.
 
 A project maps a key to a tracker project and the local repos its work lands in:
 
@@ -196,7 +205,7 @@ A project maps a key to a tracker project and the local repos its work lands in:
 Every key — per-project overrides, agent definitions, and the opt-in gates
 (dead-letter, quality gate, SLA, CI rework, review) — is documented in the
 **[config reference](docs/config.md)**. API keys are set in your shell profile,
-never in `~/beflow/config.json`.
+never in `config.json`.
 
 ## Documentation
 

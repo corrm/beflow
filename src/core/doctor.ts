@@ -7,6 +7,7 @@ export interface DoctorCheck {
     name: string;
     level: CheckLevel;
     detail: string;
+    fixable?: boolean;
 }
 
 export interface DoctorDeps {
@@ -36,6 +37,7 @@ export async function doctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     } catch (err) {
         checks.push({
             detail: err instanceof Error ? err.message : String(err),
+            fixable: true,
             level: "fail",
             name: "config",
         });
@@ -46,6 +48,7 @@ export async function doctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
         if (trackerConfig === undefined) {
             checks.push({
                 detail: `no config for active tracker "${config.tracker}" under "trackers"`,
+                fixable: true,
                 level: "fail",
                 name: "tracker config",
             });
@@ -70,7 +73,7 @@ export async function doctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
         const count = Object.keys(registry.projects).length;
         if (count === 0) {
             checks.push({
-                detail: "loaded but has no projects",
+                detail: "loaded but has no projects — run `beflow setup <KEY>` to register one",
                 level: "fail",
                 name: "projects",
             });
@@ -220,4 +223,117 @@ export async function doctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     }
 
     return checks;
+}
+
+export interface FixAction {
+    name: string;
+    done: boolean;
+    detail: string;
+}
+
+export interface DoctorFixDeps {
+    configPath: () => string;
+    readConfig: (path: string) => string | null;
+    writeConfig: (path: string, content: string) => void;
+    ensureDir: (path: string) => void;
+    dirExists: (path: string) => boolean;
+    resolveDirs: () => { worktrees: string; runs: string; decisions: string };
+    bootstrap: string;
+    activeTrackerBlock: (tracker: string) => Record<string, unknown> | undefined;
+}
+
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseJsonObject(content: string): Record<string, unknown> | null {
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(content);
+    } catch {
+        return null;
+    }
+    return isJsonObject(parsed) ? parsed : null;
+}
+
+export function fixDoctor(deps: DoctorFixDeps): FixAction[] {
+    const actions: FixAction[] = [];
+
+    const path = deps.configPath();
+    const existing = deps.readConfig(path);
+    if (existing === null) {
+        deps.writeConfig(path, deps.bootstrap);
+        actions.push({ detail: `created ${path} from the built-in template`, done: true, name: "config file" });
+    } else {
+        actions.push({ detail: `already present (${path})`, done: false, name: "config file" });
+    }
+
+    const current = deps.readConfig(path);
+    if (current === null) {
+        actions.push({
+            detail: "skipped — config file is unreadable",
+            done: false,
+            name: "tracker block",
+        });
+    } else {
+        const config = parseJsonObject(current);
+        if (config === null) {
+            actions.push({
+                detail: `cannot auto-repair: ${path} is not valid JSON — fix it by hand`,
+                done: false,
+                name: "tracker block",
+            });
+        } else {
+            const tracker = typeof config.tracker === "string" ? config.tracker : undefined;
+            if (tracker === undefined) {
+                actions.push({
+                    detail: "skipped — no active tracker set in config",
+                    done: false,
+                    name: "tracker block",
+                });
+            } else {
+                const trackers = isJsonObject(config.trackers) ? config.trackers : {};
+                if (Object.prototype.hasOwnProperty.call(trackers, tracker)) {
+                    actions.push({
+                        detail: `already present (trackers.${tracker})`,
+                        done: false,
+                        name: "tracker block",
+                    });
+                } else {
+                    const block = deps.activeTrackerBlock(tracker);
+                    if (block === undefined) {
+                        actions.push({
+                            detail: `skipped — no template block for tracker "${tracker}"`,
+                            done: false,
+                            name: "tracker block",
+                        });
+                    } else {
+                        const next = { ...config, trackers: { ...trackers, [tracker]: block } };
+                        deps.writeConfig(path, JSON.stringify(next, null, 2) + "\n");
+                        actions.push({
+                            detail: `added trackers.${tracker}`,
+                            done: true,
+                            name: "tracker block",
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    const dirs = deps.resolveDirs();
+    for (const [name, dir] of [
+        ["worktrees dir", dirs.worktrees],
+        ["runs dir", dirs.runs],
+        ["decisions dir", dirs.decisions],
+    ] as const) {
+        if (deps.dirExists(dir)) {
+            actions.push({ detail: `already present (${dir})`, done: false, name });
+        } else {
+            deps.ensureDir(dir);
+            actions.push({ detail: `created ${dir}`, done: true, name });
+        }
+    }
+
+    return actions;
 }

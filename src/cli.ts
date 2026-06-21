@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { defineCommand, runCommand, showUsage } from "citty";
@@ -8,14 +8,15 @@ import type { ArgsDef, CommandContext, CommandDef } from "citty";
 import { AcpxDriver, resolveAcpCommand, resolveAcpxCommand } from "./agent/acpx.ts";
 import type { AgentDriver } from "./agent/driver.ts";
 import { loadConfig, loadRegistry } from "./config/load.ts";
-import { configDir } from "./config/paths.ts";
+import { CONFIG_BOOTSTRAP, configDir, configPath } from "./config/paths.ts";
 import type { Config, Registry } from "./config/schema.ts";
 import { ConfigStore, nodeConfigWatcher } from "./config/store.ts";
 import type { ConfigWatcher } from "./config/store.ts";
 import { acceptIntake } from "./core/accept.ts";
 import { isDecisionHeld } from "./core/decision.ts";
-import { doctor } from "./core/doctor.ts";
-import type { DoctorCheck } from "./core/doctor.ts";
+import { resolveDecisionsDir } from "./core/decisionlog.ts";
+import { doctor, fixDoctor } from "./core/doctor.ts";
+import type { DoctorCheck, DoctorFixDeps } from "./core/doctor.ts";
 import { assertBoardReady, boardDrift } from "./core/drift.ts";
 import { runGc } from "./core/gc.ts";
 import { isThinIssue, resolveMinBodyChars } from "./core/inputquality.ts";
@@ -84,6 +85,9 @@ export interface CliDeps {
     configWatcher?: ConfigWatcher;
     fileExists?: (path: string) => boolean;
     onPath?: (cmd: string) => boolean;
+    // Test-injection seam for `beflow doctor --fix`; defaults to the real Node
+    // fs-backed config/structure repairer.
+    doctorFix?: DoctorFixDeps;
     ping?: Ping;
     log?: (msg: string) => void;
     cwd?: string;
@@ -173,7 +177,7 @@ interface CliContext {
 // Builds the CliContext shared by every command that needs a tracker + prompts.
 // Config is loaded here (inside command `run` handlers) rather than in `runCli`
 // so that `--help` — which citty resolves without invoking `run` — works even
-// when ~/beflow/config.json is missing or invalid.
+// when the config at configDir() is missing or invalid.
 function loadContext(deps: CliDeps, log: (msg: string) => void, fail: (msg: string) => number): CliContext {
     const dir = deps.cwd ?? configDir();
     const config = deps.loadConfig(dir);
@@ -335,11 +339,13 @@ function buildCli(deps: CliDeps): Cli {
 
     const doctorCmd = defineCommand({
         args: {
+            fix: { description: "auto-repair fixable config/structure problems", type: "boolean" },
             ping: { description: "hit the tracker read API", type: "boolean" },
         } satisfies ArgsDef as ArgsDef,
         meta: { description: "Diagnose the local beflow environment", name: "doctor" },
         // doctor intentionally runs WITHOUT loadContext so it works with no config.
-        run: async ({ args }) => cmdDoctor({ ping: asBool(args.ping) }, deps, deps.cwd ?? process.cwd(), makeLog(deps)),
+        run: async ({ args }) =>
+            cmdDoctor({ fix: asBool(args.fix), ping: asBool(args.ping) }, deps, deps.cwd ?? configDir(), makeLog(deps)),
     });
 
     const gcCmd = defineCommand({
@@ -744,14 +750,73 @@ function resolveEnrich(project: string, ctx: CliContext): EnrichIssue | undefine
     });
 }
 
+function asJsonObject(value: unknown): Record<string, unknown> | undefined {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return undefined;
+    }
+    const result: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value)) {
+        result[key] = val;
+    }
+    return result;
+}
+
+function bootstrapTrackerBlock(tracker: string): Record<string, unknown> | undefined {
+    const parsed: unknown = JSON.parse(CONFIG_BOOTSTRAP);
+    const root = asJsonObject(parsed);
+    const trackers = root !== undefined ? asJsonObject(root.trackers) : undefined;
+    if (trackers === undefined) {
+        return undefined;
+    }
+    return asJsonObject(trackers[tracker]);
+}
+
+function defaultDoctorFixDeps(deps: CliDeps, dir: string): DoctorFixDeps {
+    const dirExists = deps.fileExists ?? existsSync;
+    return {
+        activeTrackerBlock: bootstrapTrackerBlock,
+        bootstrap: CONFIG_BOOTSTRAP,
+        configPath,
+        dirExists,
+        ensureDir: (path) => {
+            mkdirSync(path, { recursive: true });
+        },
+        readConfig: (path) => (existsSync(path) ? readFileSync(path, "utf8") : null),
+        resolveDirs: () => {
+            let config: Config | undefined;
+            try {
+                config = deps.loadConfig(dir);
+            } catch {
+                config = undefined;
+            }
+            return {
+                decisions: resolveDecisionsDir(config?.decisions?.dir),
+                runs: resolveRunsDir(config?.runs?.dir),
+                worktrees: resolveWorktreeDir(config?.worktrees?.dir),
+            };
+        },
+        writeConfig: (path, content) => {
+            writeFileSync(path, content);
+        },
+    };
+}
+
 async function cmdDoctor(
-    args: { ping?: boolean | undefined },
+    args: { ping?: boolean | undefined; fix?: boolean | undefined },
     deps: CliDeps,
     dir: string,
     log: (msg: string) => void,
 ): Promise<number> {
     const fileExists = deps.fileExists ?? existsSync;
     const onPath = deps.onPath ?? onPathDefault;
+
+    if (args.fix === true) {
+        const actions = fixDoctor(deps.doctorFix ?? defaultDoctorFixDeps(deps, dir));
+        for (const action of actions) {
+            log(`✚ ${action.name} — ${action.detail}`);
+        }
+    }
+
     const checks = await doctor({
         env: process.env,
         fileExists,
@@ -769,6 +834,11 @@ async function cmdDoctor(
     for (const check of checks) {
         log(`${checkGlyph(check.level)} ${check.name} — ${check.detail}`);
     }
+
+    if (args.fix !== true && checks.some((c) => c.fixable === true && c.level === "fail")) {
+        log("→ Some problems above are auto-fixable. Run `beflow doctor --fix` to repair them.");
+    }
+
     return checks.some((c) => c.level === "fail") ? 1 : 0;
 }
 

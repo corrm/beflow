@@ -182,7 +182,8 @@ export const fileSchema = z.object({
     // `projects.<KEY>.telemetry` overrides this global.
     telemetry: z.object({ inComment: z.boolean().optional() }).optional(),
     // Where `--auto` runs create their per-issue git worktrees. `~` expands to the
-    // Home dir; defaults to ~/.beflow/worktrees (outside any repo).
+    // Home dir; defaults to $XDG_DATA_HOME/beflow/worktrees (fallback
+    // ~/.local/share/beflow/worktrees, outside any repo).
     worktrees: z
         .object({
             dir: z.string(),
@@ -193,11 +194,13 @@ export const fileSchema = z.object({
     // Acpx-driven runs (`--auto`/`watch`/`--attend`). Disabled by default.
     mcp: z.object({ enabled: z.boolean().default(false) }).optional(),
     // Where `--auto` runs persist their per-issue run-records so an interrupted
-    // Run can resume. `~` expands to home; defaults to ~/.beflow/runs.
+    // Run can resume. `~` expands to home; defaults to $XDG_STATE_HOME/beflow/runs
+    // (fallback ~/.local/state/beflow/runs).
     runs: z.object({ dir: z.string() }).optional(),
     // Append-only canonical decision log: every post-run policy decision is
     // Written here as one NDJSON event, outliving the run-record GC. `~` expands
-    // To home; defaults to ~/.beflow/decisions (a sibling of the runs dir).
+    // To home; defaults to $XDG_STATE_HOME/beflow/decisions (fallback
+    // ~/.local/state/beflow/decisions, a sibling of the runs dir).
     // `comment` (default true) posts a human-readable receipt of each decision
     // As a comment on the tracker issue; set false to opt out.
     decisions: z.object({ dir: z.string().optional(), comment: z.boolean().optional() }).optional(),

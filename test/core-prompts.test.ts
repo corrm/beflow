@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { join } from "node:path";
 
+import { xdgConfigHome } from "../src/config/xdg.ts";
 import { renderContinuation } from "../src/core/continuation.ts";
 import type { ContinuationContext } from "../src/core/continuation.ts";
 import {
@@ -17,6 +19,22 @@ import type { Issue, JobKind } from "../src/model/types.ts";
 import type { IssueContext } from "../src/trackers/tracker.ts";
 
 const JOB_KINDS: JobKind[] = ["triage", "spec", "implement"];
+
+// Run a body with XDG_CONFIG_HOME pinned to an absolute path so the global
+// Prompt-dir fallback (xdgConfigHome()) is hermetic; restore the prior value.
+function withXdgConfigHome(body: (globalDir: string) => void): void {
+    const prior = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = "/xdg-config";
+    try {
+        body(xdgConfigHome());
+    } finally {
+        if (prior === undefined) {
+            delete process.env.XDG_CONFIG_HOME;
+        } else {
+            process.env.XDG_CONFIG_HOME = prior;
+        }
+    }
+}
 
 // Substrings that would re-couple a contract to a specific issue tracker or
 // Reintroduce tracker I/O. The agent never touches the tracker — beflow does.
@@ -215,39 +233,45 @@ describe("loadPromptSet — override cascade", () => {
         };
     }
 
-    it("project-local beats promptsDir beats ~/.beflow beats compiled default", () => {
-        // All three override layers provide triage; the project-local one wins.
-        const set = loadPromptSet(
-            depsFrom(
-                {
-                    "/cfg/prompts/triage.md": "PROJECT",
-                    "/custom/triage.md": "CUSTOM",
-                    "/home/.beflow/prompts/triage.md": "HOME",
-                },
-                "/custom",
-            ),
-        );
-        expect(set.triage).toBe("PROJECT");
+    it("project-local beats promptsDir beats the global prompts dir beats compiled default", () => {
+        withXdgConfigHome((globalDir) => {
+            // All three override layers provide triage; the project-local one wins.
+            const set = loadPromptSet(
+                depsFrom(
+                    {
+                        "/cfg/prompts/triage.md": "PROJECT",
+                        "/custom/triage.md": "CUSTOM",
+                        [join(globalDir, "prompts", "triage.md")]: "GLOBAL",
+                    },
+                    "/custom",
+                ),
+            );
+            expect(set.triage).toBe("PROJECT");
+        });
     });
 
     it("falls through to promptsDir when project-local is absent", () => {
-        const set = loadPromptSet(
-            depsFrom(
-                {
-                    "/custom/triage.md": "CUSTOM",
-                    "/home/.beflow/prompts/triage.md": "HOME",
-                },
-                "/custom",
-            ),
-        );
-        expect(set.triage).toBe("CUSTOM");
+        withXdgConfigHome((globalDir) => {
+            const set = loadPromptSet(
+                depsFrom(
+                    {
+                        "/custom/triage.md": "CUSTOM",
+                        [join(globalDir, "prompts", "triage.md")]: "GLOBAL",
+                    },
+                    "/custom",
+                ),
+            );
+            expect(set.triage).toBe("CUSTOM");
+        });
     });
 
-    it("falls through to ~/.beflow when project-local and promptsDir are absent", () => {
-        const set = loadPromptSet(depsFrom({ "/home/.beflow/prompts/spec.md": "HOME" }, "/custom"));
-        expect(set.spec).toBe("HOME");
-        // Untouched names still come from the compiled defaults.
-        expect(set.triage).toContain("TRIAGE");
+    it("falls through to the global prompts dir when project-local and promptsDir are absent", () => {
+        withXdgConfigHome((globalDir) => {
+            const set = loadPromptSet(depsFrom({ [join(globalDir, "prompts", "spec.md")]: "GLOBAL" }, "/custom"));
+            expect(set.spec).toBe("GLOBAL");
+            // Untouched names still come from the compiled defaults.
+            expect(set.triage).toContain("TRIAGE");
+        });
     });
 
     it("expands a leading ~ in promptsDir to the home dir", () => {

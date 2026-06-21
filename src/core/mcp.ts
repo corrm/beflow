@@ -1,8 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { z } from "zod";
+
+import { xdgConfigHome } from "../config/xdg.ts";
 
 // ACP McpServer shapes beflow forwards to acpx via `.acpxrc.json`. The stdio
 // Variant is the untagged union member: it carries NO `type` field. http/sse
@@ -61,7 +62,6 @@ export const mcpFileSchema = z.object({
 
 export interface McpResolveDeps {
     configDir: string;
-    home: string;
     exists: (p: string) => boolean;
     read: (p: string) => string;
 }
@@ -70,7 +70,6 @@ export function defaultMcpDeps(configDir: string): McpResolveDeps {
     return {
         configDir,
         exists: existsSync,
-        home: homedir(),
         read: (p) => readFileSync(p, "utf8"),
     };
 }
@@ -107,16 +106,12 @@ function loadMap(path: string, deps: McpResolveDeps): Record<string, McpEntry> {
     return mcpFileSchema.parse(parsed).mcpServers;
 }
 
-function expandHome(p: string, home: string): string {
-    return p.startsWith("~") ? join(home, p.slice(1)) : p;
-}
-
 // Load + merge the `.mcp.json` cascade and translate it to ACP McpServer shapes.
-// Cascade (project wins per server NAME): GLOBAL `<home>/.beflow/.mcp.json`,
+// Cascade (project wins per server NAME): GLOBAL `$XDG_CONFIG_HOME/beflow/.mcp.json`,
 // Then PROJECT `<configDir>/.mcp.json`. Missing files are skipped. Returns `[]`
 // When nothing is configured.
 export function loadMcpServers(deps: McpResolveDeps): McpServer[] {
-    const globalPath = join(expandHome("~/.beflow", deps.home), ".mcp.json");
+    const globalPath = join(xdgConfigHome(), ".mcp.json");
     const projectPath = join(deps.configDir, ".mcp.json");
     const merged: Record<string, McpEntry> = {
         ...loadMap(globalPath, deps),

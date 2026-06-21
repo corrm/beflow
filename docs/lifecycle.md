@@ -116,6 +116,10 @@ When PR-merge detection is enabled, each tick checks the open PR for every
 **In Review → Done** and cleans up the run record and the git worktree. No human
 move is required — merging the PR is the signal.
 
+Before promoting, beflow re-reads the card fresh: if a human moved it out of
+**In Review** in the window since the tick began, beflow still cleans up (the PR
+is merged) but does **not** override the human's chosen state.
+
 ### 4. PR review (In Review)
 
 When review is enabled for the project, beflow runs a reviewer agent against the
@@ -180,7 +184,10 @@ Some work should not start until a human has made a call. Label the item
    until the label is gone — it never dispatches a decision-held item.
 3. **Human** makes the call and **removes** the `needs-decision` label (and,
    optionally, leaves the rationale as a comment).
-4. **beflow** releases it back into the normal **Todo → In Progress** flow.
+4. **beflow** releases it back into the normal **Todo → In Progress** flow —
+   after a fresh re-read confirms the card is still in **Needs Input**. If a
+   human already moved it elsewhere, beflow drops the hold and hands off instead
+   of re-stating the card.
 
 ---
 
@@ -203,8 +210,10 @@ Thereafter beflow **skips** the quarantined item entirely, so it cannot burn
 more runs.
 
 **To release:** the **human** removes the `quarantined` label. On the next tick
-beflow moves the item back to **Todo**, resets the attempt counter, and fires a
-"resolved" all-clear.
+beflow re-reads the card fresh and, if it is still in **Needs Input**, moves the
+item back to **Todo**, resets the attempt counter, and fires a "resolved"
+all-clear. If a human already moved it elsewhere, beflow drops the hold and hands
+off rather than overriding that move.
 
 The counter also resets on a fresh dispatch, a human re-dispatch, or any clean
 agent completion — so a transient failure does not permanently penalize an item.

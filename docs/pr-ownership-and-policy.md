@@ -458,7 +458,9 @@ failed (the worktree and draft PR are kept for inspection).
 A `projects.<KEY>.pr` or `projects.<KEY>.policy` block **replaces** the
 corresponding global block wholesale — it does not merge with it. Use this when
 a project needs different PR defaults or policy rules from the rest of the
-workspace.
+workspace. For the full priority order (including builtins and how block-level
+replacement differs from the field-level cascade used by `agent` / `runMode`),
+see the [unified resolution reference](resolution.md#unified-resolution-reference).
 
 ```json
 "projects": {

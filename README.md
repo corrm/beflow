@@ -216,6 +216,7 @@ never in `config.json`.
 - [Lifecycle](docs/lifecycle.md) — the board as the control center
 - [Operating model](docs/OPERATING-MODEL.md) — the queue-based workflow
 - [Resolution](docs/resolution.md) — how agent / mode / repo / job kind are chosen
+- [Picking properties](docs/picking-properties.md) — set agent / jobKind / runMode / repo on a single issue via labels
 - [Prompts](docs/prompts.md) — prompt templates and overrides
 - [Issue templates](docs/issue-templates.md) — authoring work items with `beflow new`
 - [Adapters](docs/adapters.md) — writing a tracker adapter

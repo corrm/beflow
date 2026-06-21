@@ -5,9 +5,12 @@ export const THIN_ISSUE_MESSAGE =
 
 const ENTITIES: Record<string, string> = {
     "&amp;": "&",
+    "&apos;": "'",
     "&gt;": ">",
     "&lt;": "<",
     "&nbsp;": " ",
+    "&quot;": '"',
+    "&#39;": "'",
 };
 
 /**
@@ -17,7 +20,17 @@ const ENTITIES: Record<string, string> = {
  */
 export function visibleBodyLength(body: string): number {
     const stripped = body.replace(/<[^>]*>/g, "");
-    const decoded = stripped.replace(/&nbsp;|&amp;|&lt;|&gt;/g, (m) => ENTITIES[m] ?? m);
+    const namedDecoded = stripped.replace(/&(?:amp|apos|gt|lt|nbsp|quot|#39);/g, (m) => ENTITIES[m] ?? m);
+    const decoded = namedDecoded.replace(
+        /&#(?:x([0-9a-fA-F]+)|(\d+));/g,
+        (_m: string, hex: string | undefined, dec: string | undefined) => {
+            const codepoint = hex !== undefined ? parseInt(hex, 16) : parseInt(dec ?? "", 10);
+            if (isNaN(codepoint) || codepoint > 0x10ffff) {
+                return _m;
+            }
+            return String.fromCodePoint(codepoint);
+        },
+    );
     return decoded.replace(/\s+/g, " ").trim().length;
 }
 

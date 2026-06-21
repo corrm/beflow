@@ -44,6 +44,10 @@ function escapeHtml(text: string): string {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+export function unescapeHtml(text: string): string {
+    return text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
 export function toCommentHtml(text: string): string {
     return text
         .split(/\n{2,}/)

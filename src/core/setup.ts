@@ -82,18 +82,31 @@ function cancelledCreate(): never {
     throw new Error("beflow: project creation cancelled");
 }
 
+// @clack runs `validate` on the raw typed value (empty on a bare Enter) BEFORE it
+// substitutes `defaultValue`. So "Required" must apply only when there is no default;
+// with a default, an empty submission means "take the default" and is valid.
+export function requiredText(value: string | undefined, hasDefault: boolean): string | undefined {
+    if ((value ?? "").trim() === "" && !hasDefault) {
+        return "Required";
+    }
+    return undefined;
+}
+
 async function askText(message: string, opts?: { defaultValue?: string }): Promise<string> {
+    const defaultValue = opts?.defaultValue;
     const value = await text({
         message,
-        validate: (v: string | undefined): string | undefined => ((v ?? "").trim() === "" ? "Required" : undefined),
-        ...(opts?.defaultValue !== undefined
-            ? { defaultValue: opts.defaultValue, placeholder: opts.defaultValue }
-            : {}),
+        validate: (v: string | undefined): string | undefined => requiredText(v, defaultValue !== undefined),
+        ...(defaultValue !== undefined ? { defaultValue, placeholder: defaultValue } : {}),
     });
     if (isCancel(value)) {
         cancelledCreate();
     }
-    return value.trim();
+    const trimmed = value.trim();
+    if (trimmed === "" && defaultValue !== undefined) {
+        return defaultValue;
+    }
+    return trimmed;
 }
 
 async function askYes(message: string): Promise<boolean> {
@@ -116,9 +129,9 @@ export async function defaultAskProjectSpec(ctx: {
     const identifier = await askText("Project identifier", { defaultValue: ctx.key });
     const root = await askText("Project root (absolute path)");
 
-    const defaultRepoKey = await askText("Default repo key");
+    const defaultRepoKey = await askText("Default repo key", { defaultValue: identifier });
     const repos: Record<string, string> = {
-        [defaultRepoKey]: await askText(`Absolute path for repo "${defaultRepoKey}"`),
+        [defaultRepoKey]: await askText(`Absolute path for repo "${defaultRepoKey}"`, { defaultValue: root }),
     };
     while (await askYes("Add another repo?")) {
         const repoKey = await askText("Repo key");

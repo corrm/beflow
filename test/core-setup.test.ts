@@ -1,9 +1,9 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 
 import type { Project, Registry } from "../src/config/schema.ts";
 import type { RunStoreFs } from "../src/core/runstore.ts";
 import type { AskProjectSpec } from "../src/core/setup.ts";
-import { setupProject } from "../src/core/setup.ts";
+import { requiredText, setupProject } from "../src/core/setup.ts";
 import type { Issue, IssueMeta } from "../src/model/types.ts";
 import type {
     BlockerRef,
@@ -415,5 +415,70 @@ describe("setupProject", () => {
         });
         const call = t.ensureBoardCalls[0]!;
         expect(call.opts?.resolveModuleChanges).toBe(resolver);
+    });
+});
+
+describe("requiredText", () => {
+    it("rejects an empty value when there is no default", () => {
+        expect(requiredText("", false)).toBe("Required");
+        expect(requiredText("   ", false)).toBe("Required");
+        expect(requiredText(undefined, false)).toBe("Required");
+    });
+
+    it("accepts an empty value when a default is offered (Enter takes the default)", () => {
+        expect(requiredText("", true)).toBeUndefined();
+        expect(requiredText("   ", true)).toBeUndefined();
+        expect(requiredText(undefined, true)).toBeUndefined();
+    });
+
+    it("accepts any non-empty value", () => {
+        expect(requiredText("CG", false)).toBeUndefined();
+        expect(requiredText("CG", true)).toBeUndefined();
+    });
+});
+
+describe("defaultAskProjectSpec single-repo Enter-through flow", () => {
+    it("sources the default repo key from the identifier and its path from the root", async () => {
+        // Mirror @clack/prompts 1.5.1: text() runs validate on the raw value, then on a
+        // bare Enter (empty input) substitutes defaultValue. Scripted inputs drive each prompt.
+        const inputs = ["My App", "", "/root/new", "", ""];
+        let cursor = 0;
+        const confirmAnswers = [false, false];
+        let confirmCursor = 0;
+
+        await mock.module("@clack/prompts", () => ({
+            cancel: () => {},
+            confirm: async () => confirmAnswers[confirmCursor++] ?? false,
+            isCancel: () => false,
+            select: async () => {
+                throw new Error("select must not be called in the single-repo flow");
+            },
+            text: async (opts: {
+                defaultValue?: string;
+                validate?: (v: string | undefined) => string | undefined;
+            }): Promise<string> => {
+                const typed = inputs[cursor++] ?? "";
+                const error = opts.validate?.(typed);
+                if (error !== undefined) {
+                    throw new Error(`validate rejected ${JSON.stringify(typed)}: ${error}`);
+                }
+                if (typed === "" && opts.defaultValue !== undefined) {
+                    return opts.defaultValue;
+                }
+                return typed;
+            },
+        }));
+
+        const { defaultAskProjectSpec } = await import("../src/core/setup.ts");
+        const { entry, spec } = await defaultAskProjectSpec({ key: "NP", tracker: "plane" });
+
+        expect(spec).toEqual({ identifier: "NP", name: "My App" });
+        expect(entry.name).toBe("My App");
+        expect(entry.root).toBe("/root/new");
+        expect(entry.default_repo).toBe("NP");
+        expect(entry.repos).toEqual({ NP: "/root/new" });
+        expect(entry.module_repo_map).toEqual({});
+
+        mock.restore();
     });
 });

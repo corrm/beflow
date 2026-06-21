@@ -136,7 +136,7 @@ beflow runs          # list all run records
 beflow runs APP-42   # detail for one work item
 ```
 
-## `doctor [--ping]`
+## `doctor [--ping] [--fix]`
 
 Diagnose the local environment: config validity, API key presence, tool
 availability (`bun`/acpx/`gh`), and project roots/repos on disk.
@@ -144,7 +144,25 @@ availability (`bun`/acpx/`gh`), and project roots/repos on disk.
 ```bash
 beflow doctor
 beflow doctor --ping   # also hit the tracker read API and check board drift
+beflow doctor --fix    # auto-repair the safe config/structure problems
 ```
+
+When a problem is auto-fixable, plain `doctor` ends with a hint to run
+`doctor --fix`. `--fix` only ever touches beflow-owned config and state — never
+your repos, env vars, the tracker board, or installed tools. It performs exactly
+three idempotent repairs:
+
+1. **Config file** — if the config file is missing, write it from the built-in
+   template; otherwise leave it.
+2. **Tracker block** — if the active tracker has no entry under `trackers`, add
+   the matching placeholder block (preserving every other key). A config file
+   that is not valid JSON is reported, never overwritten.
+3. **beflow dirs** — create the `worktrees`, `runs`, and `decisions`
+   directories if they do not already exist.
+
+Everything else (unset API key env var, missing repos on disk, no registered
+projects, `acpx`/`gh` not on PATH, ping failures, board drift) is **not**
+auto-fixable; `doctor` prints the exact manual remediation for each.
 
 ## `gc [flags]`
 

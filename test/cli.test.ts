@@ -7,6 +7,7 @@ import { runCli } from "../src/cli.ts";
 import type { CliDeps } from "../src/cli.ts";
 import { configDir, configPath } from "../src/config/paths.ts";
 import type { Config, Registry } from "../src/config/schema.ts";
+import type { DoctorFixDeps } from "../src/core/doctor.ts";
 import type { OpenLaunch } from "../src/core/run.ts";
 import type { RunStoreFs } from "../src/core/runstore.ts";
 import type { Issue, IssueMeta } from "../src/model/types.ts";
@@ -834,6 +835,70 @@ describe("runCli doctor", () => {
         } finally {
             delete process.env.BEFLOW_TEST_KEY;
         }
+    });
+
+    it("suggests doctor --fix only when a fixable failure is present", async () => {
+        const { deps, trace } = harness();
+        deps.loadConfig = () => {
+            throw new Error("no config");
+        };
+        deps.fileExists = () => true;
+        deps.onPath = () => true;
+        await runCli(["doctor"], deps);
+        expect(trace.logs.some((l) => l.includes("doctor --fix"))).toBe(true);
+    });
+
+    it("does not suggest doctor --fix when every failure is non-fixable", async () => {
+        const { deps, trace } = harness();
+        const healthy: Config = {
+            ...config,
+            trackers: {
+                plane: {
+                    apiKeyEnv: "BEFLOW_TEST_KEY",
+                    baseUrl: "https://api.plane.so",
+                    workspaceSlug: "your-workspace",
+                },
+            },
+        };
+        process.env.BEFLOW_TEST_KEY = "token";
+        deps.loadConfig = () => healthy;
+        deps.fileExists = () => true;
+        deps.onPath = (cmd) => cmd !== "bunx"; // only acpx launcher fails — not fixable
+        try {
+            const code = await runCli(["doctor"], deps);
+            expect(code).toBe(1);
+            expect(trace.logs.some((l) => l.includes("doctor --fix"))).toBe(false);
+        } finally {
+            delete process.env.BEFLOW_TEST_KEY;
+        }
+    });
+
+    it("--fix runs the repairs first, then prints checks", async () => {
+        const { deps, trace } = harness();
+        let wroteConfig = false;
+        const ensured: string[] = [];
+        const fakeFix: DoctorFixDeps = {
+            activeTrackerBlock: () => ({ apiKeyEnv: "PLANE_API_KEY" }),
+            bootstrap: "{}\n",
+            configPath: () => "/cfg/config.json",
+            dirExists: () => false,
+            ensureDir: (p) => {
+                ensured.push(p);
+            },
+            readConfig: () => null,
+            resolveDirs: () => ({ decisions: "/d/decisions", runs: "/d/runs", worktrees: "/d/worktrees" }),
+            writeConfig: () => {
+                wroteConfig = true;
+            },
+        };
+        deps.doctorFix = fakeFix;
+        deps.fileExists = () => true;
+        deps.onPath = () => true;
+        await runCli(["doctor", "--fix"], deps);
+        expect(wroteConfig).toBe(true);
+        expect(ensured).toEqual(["/d/worktrees", "/d/runs", "/d/decisions"]);
+        expect(trace.logs.some((l) => l.startsWith("✚"))).toBe(true);
+        expect(trace.logs.some((l) => l.includes("config —"))).toBe(true);
     });
 });
 

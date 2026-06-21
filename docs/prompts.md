@@ -30,6 +30,12 @@ A contract for a standard run is `<role>.md` (chosen by the resolved jobKind)
 followed by a blank line and `report.md`. The task is `task.md` rendered with the
 issue fields.
 
+`report.md` also documents the optional **change receipt** — a structured
+statement of intent and risk surfaces the agent may emit inside the
+`beflow-report` block on a `done` run. The post-run policy gate carries it through
+and may judge it; see
+[Change receipt](pr-ownership-and-policy.md#change-receipt).
+
 ### Issue-authoring template (`issue-enrich.md`)
 
 `issue-enrich.md` is a separate prompt used only by [`beflow new`](commands.md#new-project-template) `--enrich`. It is

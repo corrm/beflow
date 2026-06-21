@@ -13,6 +13,7 @@ import {
     saveRecord,
 } from "../src/core/runstore.ts";
 import type { RunRecord, RunStoreFs } from "../src/core/runstore.ts";
+import type { ChangeReceipt } from "../src/model/types.ts";
 
 function memFs(): { fs: RunStoreFs; store: Map<string, string> } {
     const store = new Map<string, string>();
@@ -98,6 +99,22 @@ describe("runstore roundtrip", () => {
             outputTokens: 5,
             totalTokens: 25939,
         });
+    });
+
+    it("round-trips a report change receipt", () => {
+        const { fs } = memFs();
+        const receipt: ChangeReceipt = {
+            filesTouched: ["src/api/auth.ts"],
+            intent: "add a login route",
+            riskSurfaces: ["app", "auth"],
+            surfaceNotes: { auth: "no change to token signing" },
+        };
+        const record = makeRecord({
+            report: { receipt, status: "done", summary: "shipped" },
+            status: "done",
+        });
+        saveRecord("/runs", record, fs);
+        expect(loadRecord("/runs", "CG-42", fs)?.report?.receipt).toEqual(receipt);
     });
 
     it("keys the file by sanitized key", () => {

@@ -11,6 +11,7 @@ import { buildDecisionEvent, resolveDecisionsDir } from "../src/core/decisionlog
 import type { DecisionEvent, DecisionSink } from "../src/core/decisionlog.ts";
 import type { McpFs, McpServer } from "../src/core/mcp.ts";
 import type { NotifyEvent } from "../src/core/notify.ts";
+import type { PolicyExec } from "../src/core/policy.ts";
 import { PREFLIGHT_BLOCK_MESSAGE } from "../src/core/preflight.ts";
 import { loadPromptSet } from "../src/core/prompts.ts";
 import type { GateExec } from "../src/core/qualitygate.ts";
@@ -34,7 +35,7 @@ import type {
 import type { Clock, RunRecord, RunStoreFs } from "../src/core/runstore.ts";
 import { runRecordSchema, saveRecord } from "../src/core/runstore.ts";
 import type { Exec, ExecResult } from "../src/core/worktree.ts";
-import type { Issue, IssueMeta, PolicyDecision } from "../src/model/types.ts";
+import type { ChangeReceipt, Issue, IssueMeta, PolicyDecision } from "../src/model/types.ts";
 import type {
     BlockerRef,
     BoardState,
@@ -2577,6 +2578,38 @@ describe("runIssue", () => {
             expect(result.applied).toEqual({ movedTo: "In Review" });
             expect(tracker.calls.some((c) => c.kind === "linkPR" && c.url === "http://agent/pr/1")).toBe(true);
             expect(onlyRecord(store)?.prUrl).toBe("http://agent/pr/1");
+        });
+
+        it("hands the agent's change receipt to the post-run policy command on stdin", async () => {
+            const tracker = new FakeTracker(implementIssue());
+            const receipt: ChangeReceipt = {
+                intent: "add a login route",
+                riskSurfaces: ["app", "auth"],
+                surfaceNotes: { auth: "no change to token signing" },
+            };
+            const { driver } = fakeDriver({ receipt, status: "done", summary: "shipped" });
+            const { git } = fakeGit();
+            const { exec } = fakePrExec();
+            let seenStdin = "";
+            const policyExec: PolicyExec = async (_argv, _cwd, stdin) => {
+                seenStdin = stdin;
+                return { exitCode: 0, stderr: "", stdout: '{"decision":"allow"}' };
+            };
+            await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    driver,
+                    git,
+                    policyExec,
+                    prExec: exec,
+                    registry: beflowRegistry({ command: ["policy.sh"], evaluator: "command", onBlock: "comment" }),
+                    tracker,
+                }),
+            );
+
+            const parsed: unknown = JSON.parse(seenStdin);
+            expect(parsed).toMatchObject({ receipt });
         });
 
         describe("decision log", () => {

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 
 import { z } from "zod";
 
+import { receiptSchema } from "../agent/report.ts";
 import { xdgStateHome } from "../config/xdg.ts";
 import { expandHome, sanitizeKey } from "./worktree.ts";
 
@@ -10,6 +11,7 @@ export const reportSchema = z.object({
     notes: z.string().optional(),
     prUrl: z.string().optional(),
     questions: z.array(z.string()).optional(),
+    receipt: receiptSchema.optional(),
     status: z.enum(["done", "needs_input", "blocked", "failed"]),
     summary: z.string(),
 });

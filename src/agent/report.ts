@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { ChangeReceipt } from "../model/types.ts";
+
 export type ReportStatus = "done" | "needs_input" | "blocked" | "failed";
 
 export interface Report {
@@ -8,12 +10,29 @@ export interface Report {
     prUrl?: string;
     questions?: string[];
     notes?: string;
+    receipt?: ChangeReceipt;
 }
+
+/**
+ * The single source of truth for the change-receipt shape (runstore reuses this).
+ * `surfaceNotes` is a string-keyed record because zod's enum-keyed record is
+ * exhaustive (it would demand every surface); keys SHOULD be `RiskSurface` values.
+ */
+export const receiptSchema = z.object({
+    filesTouched: z.array(z.string()).optional(),
+    intent: z.string(),
+    nextDecision: z.string().optional(),
+    riskSurfaces: z.array(z.enum(["app", "deps", "infra", "auth", "data", "ci"])),
+    surfaceNotes: z.record(z.string(), z.string()).optional(),
+    testsRun: z.array(z.string()).optional(),
+    uncertainty: z.string().optional(),
+});
 
 const reportSchema = z.object({
     notes: z.string().optional(),
     prUrl: z.string().optional(),
     questions: z.array(z.string()).optional(),
+    receipt: receiptSchema.optional(),
     status: z.enum(["done", "needs_input", "blocked", "failed"]),
     summary: z.string(),
 });

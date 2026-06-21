@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import { extractReport } from "../src/agent/report.ts";
+import type { ChangeReceipt } from "../src/model/types.ts";
 
 describe("extractReport", () => {
     it("parses a valid beflow-report block", () => {
@@ -98,6 +99,45 @@ describe("extractReport", () => {
 
     it("returns null when summary is missing", () => {
         const text = '```beflow-report\n{"status":"done"}\n```';
+        expect(extractReport(text)).toBeNull();
+    });
+
+    it("parses a populated change receipt", () => {
+        const receipt: ChangeReceipt = {
+            filesTouched: ["src/api/auth.ts"],
+            intent: "add a login route",
+            nextDecision: "confirm the rate-limit value",
+            riskSurfaces: ["app", "auth"],
+            surfaceNotes: { auth: "no change to token signing" },
+            testsRun: ["bun test test/auth.test.ts"],
+            uncertainty: "rate limit default may be too low",
+        };
+        const text = `\`\`\`beflow-report\n${JSON.stringify({ receipt, status: "done", summary: "shipped" })}\n\`\`\``;
+        expect(extractReport(text)).toEqual({ receipt, status: "done", summary: "shipped" });
+    });
+
+    it("leaves receipt undefined when the report omits it", () => {
+        const text = '```beflow-report\n{"status":"done","summary":"shipped"}\n```';
+        const report = extractReport(text);
+        expect(report).toEqual({ status: "done", summary: "shipped" });
+        expect(report?.receipt).toBeUndefined();
+    });
+
+    it("rejects the whole report when a receipt risk surface is invalid", () => {
+        const text = `\`\`\`beflow-report\n${JSON.stringify({
+            receipt: { intent: "x", riskSurfaces: ["app", "bogus"] },
+            status: "done",
+            summary: "s",
+        })}\n\`\`\``;
+        expect(extractReport(text)).toBeNull();
+    });
+
+    it("rejects a receipt that is missing intent", () => {
+        const text = `\`\`\`beflow-report\n${JSON.stringify({
+            receipt: { riskSurfaces: ["app"] },
+            status: "done",
+            summary: "s",
+        })}\n\`\`\``;
         expect(extractReport(text)).toBeNull();
     });
 });

@@ -165,6 +165,48 @@ branch protection rules.
 
 ---
 
+## Change receipt
+
+On a finished `done` run the agent MAY emit a **change receipt**: a structured
+statement of _intent_ and _risk surfaces_ alongside its report. It is carried
+through the run record and handed to the post-run gate so the gate can judge what
+the change is trying to do, not only which files it touched. The receipt is
+**additive intent** — path rules remain the floor. The `globs` and `agentowners`
+evaluators ignore it entirely (they decide on paths); only the `command`
+evaluator receives it (on stdin, in the change context) and may judge it.
+
+The agent emits the receipt inside its `beflow-report` block (see
+[Prompts and contracts](prompts.md)). beflow knows the issue id and branch, so
+the agent does not repeat them. Implement runs that change code SHOULD include
+a receipt; triage and spec runs that change nothing may omit it.
+
+| Field          | Required | Meaning                                                     |
+| -------------- | -------- | ----------------------------------------------------------- |
+| `intent`       | yes      | One or two lines: what the change does and why.             |
+| `riskSurfaces` | yes      | The risk surfaces the change touches (taxonomy below).      |
+| `surfaceNotes` | no       | A policy-relevant note per surface, keyed by surface name.  |
+| `filesTouched` | no       | The files the agent claims it changed (beflow still diffs). |
+| `testsRun`     | no       | Tests or commands the agent ran.                            |
+| `uncertainty`  | no       | What the agent is unsure about.                             |
+| `nextDecision` | no       | The next human decision needed, if any.                     |
+
+Risk-surface taxonomy:
+
+| Surface | Meaning                                                 |
+| ------- | ------------------------------------------------------- |
+| `app`   | Application/product code and business logic.            |
+| `deps`  | Dependencies, lockfiles, package manifests.             |
+| `infra` | Infrastructure, deployment, runtime config.             |
+| `auth`  | Authentication, authorization, secrets, access control. |
+| `data`  | Schemas, migrations, data handling, persistence.        |
+| `ci`    | CI/CD pipelines and build automation.                   |
+
+The gate evaluates the receipt **and** the diff: a `command` evaluator can return
+`require_approval` or `block` informed by `riskSurfaces` (e.g. require approval for
+any change that touches `auth`), while `changedFiles` still bounds the decision.
+
+---
+
 ## Decision log
 
 Every post-run policy decision is recorded as one append-only event in a local
@@ -387,9 +429,18 @@ beflow invokes the command and passes the change context as JSON on stdin:
   "jobKind": "implement",
   "repo": "main_repo",
   "baseBranch": "main",
-  "changedFiles": ["src/api/auth.ts", "infra/rds.tf"]
+  "changedFiles": ["src/api/auth.ts", "infra/rds.tf"],
+  "receipt": {
+    "intent": "add a login route",
+    "riskSurfaces": ["app", "auth"],
+    "surfaceNotes": { "auth": "no change to token signing" }
+  }
 }
 ```
+
+`receipt` is the agent's [change receipt](#change-receipt) and is present only when
+the agent emitted one. The command may judge `intent` and `riskSurfaces` in addition
+to `changedFiles` — but `changedFiles` remains the floor.
 
 The command must write a single JSON object to stdout and exit 0:
 

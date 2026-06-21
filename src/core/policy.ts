@@ -2,7 +2,7 @@ import { isAbsolute, resolve } from "node:path";
 
 import { Glob, file, spawn } from "bun";
 
-import type { PolicyDecision, PolicyRule, ResolvedPolicy } from "../model/types.ts";
+import type { ChangeReceipt, PolicyDecision, PolicyRule, ResolvedPolicy } from "../model/types.ts";
 import type { Exec } from "./worktree.ts";
 
 /** The change context handed to the policy gate after a run produces a diff. */
@@ -13,6 +13,12 @@ export interface PolicyContext {
     baseBranch: string;
     changedFiles: string[];
     issueKey: string;
+    /**
+     * The agent's change receipt, when it emitted one. Additive intent only — globs
+     * and agentowners ignore it (paths stay the floor); the `command` evaluator
+     * receives it on stdin and may judge it.
+     */
+    receipt?: ChangeReceipt;
 }
 
 /** A single rule that fired during evaluation, in structured form. */
@@ -160,6 +166,8 @@ async function evaluateCommand(
     if (policy.command === undefined || policy.command.length === 0) {
         throw new Error("beflow: policy evaluator is 'command' but policy.command is missing");
     }
+    // The full context — including the change receipt when present — is piped as
+    // JSON so external evaluators can judge intent + risk surfaces, not just paths.
     const ran = await exec(policy.command, context.repo, JSON.stringify(context));
     if (ran.exitCode !== 0) {
         throw new Error(`beflow: policy command failed (exit ${String(ran.exitCode)}): ${ran.stderr.trim()}`);

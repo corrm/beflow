@@ -664,6 +664,23 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                 summary: `Agent run timed out after ${String(maxRunMinutes)} minutes and was stopped automatically.`,
             },
         };
+    } else if (result.report === null && (result.exitCode !== 0 || result.stream.error !== undefined)) {
+        // CRASH: the agent process exited non-zero or the ACP stream carried an error,
+        // Yet emitted no report (and did not time out). Synthesize a `failed` report so
+        // The run routes through the SAME writeback path as the timeout park above — a
+        // Crash and a timeout fail identically, never silently left In Progress.
+        const cause =
+            result.stream.error !== undefined
+                ? `stream error: ${result.stream.error.message}`
+                : `exit code ${String(result.exitCode)}`;
+        log(`beflow: ${key} crashed (${cause}); stopped and parking as failed`);
+        result = {
+            ...result,
+            report: {
+                status: "failed",
+                summary: `Agent run crashed (${cause}) and produced no report.`,
+            },
+        };
     }
 
     // YIELD: the human is authoritative for STATE. If the card was moved out of the

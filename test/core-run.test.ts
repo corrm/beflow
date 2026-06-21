@@ -240,6 +240,34 @@ function timedOutDriver(): { driver: AgentDriver; seen: RunOptions[] } {
     return { driver, seen };
 }
 
+// A driver that models an agent crash: the process exited non-zero and/or the ACP
+// Stream carried an error, yet emitted no report and did not time out.
+function crashedDriver(opts: { exitCode: number; error?: { code?: number; message: string } }): {
+    driver: AgentDriver;
+    seen: RunOptions[];
+} {
+    const seen: RunOptions[] = [];
+    const driver: AgentDriver = {
+        cancel: async () => {},
+        ensureSession: async () => {},
+        run: async (runOpts: RunOptions): Promise<AgentRunResult> => {
+            seen.push(runOpts);
+            return {
+                exitCode: opts.exitCode,
+                raw: [],
+                report: null,
+                stream: {
+                    assistantText: "",
+                    toolCalls: [],
+                    ...(opts.error !== undefined ? { error: opts.error } : {}),
+                },
+                timedOut: false,
+            };
+        },
+    };
+    return { driver, seen };
+}
+
 function memRunsFs(): { fs: RunStoreFs; store: Map<string, string> } {
     const store = new Map<string, string>();
     const fs: RunStoreFs = {
@@ -722,6 +750,80 @@ describe("runIssue", () => {
         const { fs, store } = memRunsFs();
         await runIssue("CG-42", {}, deps({ driver, git, runsFs: fs, tracker }));
 
+        expect(calls.some((c) => c.includes("remove"))).toBe(false);
+        expect(onlyRecord(store)?.status).toBe("in_progress");
+    });
+
+    it("on a crash with no report (non-zero exit): parks as failed (Needs Input + failed label + escalation)", async () => {
+        const tracker = new FakeTracker(makeIssue({ meta: { runMode: "autonomous" } }));
+        const { driver } = crashedDriver({ exitCode: 1 });
+        const { git, calls } = fakeGit();
+        const { fs, store } = memRunsFs();
+        const events: NotifyEvent[] = [];
+        await runIssue(
+            "CG-42",
+            {},
+            deps({
+                driver,
+                git,
+                notify: {
+                    notify: async (evt: NotifyEvent): Promise<void> => {
+                        events.push(evt);
+                    },
+                },
+                runsFs: fs,
+                tracker,
+            }),
+        );
+
+        expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "Needs Input")).toBe(true);
+        expect(tracker.calls.some((c) => c.kind === "addProperty" && c.label === "failed")).toBe(true);
+        expect(tracker.calls.some((c) => c.kind === "comment" && c.body.includes("crashed (exit code 1)"))).toBe(true);
+        expect(calls.some((c) => c.includes("remove"))).toBe(false);
+        expect(onlyRecord(store)?.status).toBe("failed");
+        expect(events.some((e) => e.reason === "failed")).toBe(true);
+    });
+
+    it("on a crash with no report (exit 0 but ACP stream error): parks as failed", async () => {
+        const tracker = new FakeTracker(makeIssue({ meta: { runMode: "autonomous" } }));
+        const { driver } = crashedDriver({ error: { message: "boom" }, exitCode: 0 });
+        const { git } = fakeGit();
+        const { fs, store } = memRunsFs();
+        const events: NotifyEvent[] = [];
+        await runIssue(
+            "CG-42",
+            {},
+            deps({
+                driver,
+                git,
+                notify: {
+                    notify: async (evt: NotifyEvent): Promise<void> => {
+                        events.push(evt);
+                    },
+                },
+                runsFs: fs,
+                tracker,
+            }),
+        );
+
+        expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "Needs Input")).toBe(true);
+        expect(tracker.calls.some((c) => c.kind === "addProperty" && c.label === "failed")).toBe(true);
+        expect(tracker.calls.some((c) => c.kind === "comment" && c.body.includes("crashed (stream error: boom)"))).toBe(
+            true,
+        );
+        expect(onlyRecord(store)?.status).toBe("failed");
+        expect(events.some((e) => e.reason === "failed")).toBe(true);
+    });
+
+    it("on a clean empty run (no report, exit 0, no stream error): keeps the worktree and in_progress record", async () => {
+        const tracker = new FakeTracker(makeIssue({ meta: { runMode: "autonomous" } }));
+        const { driver } = crashedDriver({ exitCode: 0 });
+        const { git, calls } = fakeGit();
+        const { fs, store } = memRunsFs();
+        await runIssue("CG-42", {}, deps({ driver, git, runsFs: fs, tracker }));
+
+        expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "Needs Input")).toBe(false);
+        expect(tracker.calls.some((c) => c.kind === "addProperty" && c.label === "failed")).toBe(false);
         expect(calls.some((c) => c.includes("remove"))).toBe(false);
         expect(onlyRecord(store)?.status).toBe("in_progress");
     });

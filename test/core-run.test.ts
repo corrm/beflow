@@ -10,6 +10,7 @@ import type { Config, Registry } from "../src/config/schema.ts";
 import type { DecisionEvent, DecisionSink } from "../src/core/decisionlog.ts";
 import type { McpFs, McpServer } from "../src/core/mcp.ts";
 import type { NotifyEvent } from "../src/core/notify.ts";
+import { PREFLIGHT_BLOCK_MESSAGE } from "../src/core/preflight.ts";
 import { loadPromptSet } from "../src/core/prompts.ts";
 import type { GateExec } from "../src/core/qualitygate.ts";
 import {
@@ -1531,6 +1532,221 @@ describe("runIssue", () => {
 
         expect(result.parked).toBeUndefined();
         expect(seen).toHaveLength(1);
+    });
+
+    describe("preflight", () => {
+        // A registry whose CG project opts into a policy. The preflight reuses the SAME
+        // resolvePolicy/evaluatePolicy as the post-diff gate (one resolver, two call
+        // points), so a globs block here is what both layers see.
+        function policyRegistry(policy: Registry["projects"]["CG"]["policy"]): Registry {
+            return {
+                ...registry,
+                projects: {
+                    ...registry.projects,
+                    CG: { ...registry.projects.CG!, ...(policy !== undefined ? { policy } : {}) },
+                },
+            };
+        }
+
+        const declaringIssue = (body: string): Issue =>
+            makeIssue({ body, meta: { jobKind: "implement", runMode: "autonomous" } });
+
+        it("BLOCKS to Needs Input when declared body paths hit a block rule, before any worktree", async () => {
+            const tracker = new FakeTracker(declaringIssue("Rotate the secrets in infra/secrets.tf for the deploy."));
+            const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
+            const { git, calls } = fakeGit();
+            const { fs, store } = memRunsFs();
+            const events: NotifyEvent[] = [];
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    config: autonomousConfig,
+                    driver,
+                    git,
+                    notify: {
+                        notify: async (evt: NotifyEvent): Promise<void> => {
+                            events.push(evt);
+                        },
+                    },
+                    registry: policyRegistry({
+                        evaluator: "globs",
+                        rules: [{ decision: "block", paths: ["infra/**"] }],
+                    }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            expect(result.parked).toBe("preflight");
+            // The agent never ran and no worktree was created.
+            expect(seen).toHaveLength(0);
+            expect(calls.some((c) => c.includes("add"))).toBe(false);
+            // Moved to Needs Input with the block comment; never moved to In Progress.
+            expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "Needs Input")).toBe(true);
+            expect(tracker.calls.some((c) => c.kind === "comment" && c.body.includes(PREFLIGHT_BLOCK_MESSAGE))).toBe(
+                true,
+            );
+            expect(tracker.calls.some((c) => c.kind === "updateState" && c.state === "In Progress")).toBe(false);
+            // No record was claimed; escalation fired as needs_input.
+            expect(store.size).toBe(0);
+            expect(events.some((e) => e.reason === "needs_input")).toBe(true);
+        });
+
+        it("PROCEEDS when declared paths hit only require_approval (post-diff gate stays authoritative)", async () => {
+            const tracker = new FakeTracker(declaringIssue("Refactor src/core/run.ts to share the resolver."));
+            const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
+            const { git, calls } = fakeGit();
+            const { fs } = memRunsFs();
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    config: autonomousConfig,
+                    driver,
+                    git,
+                    registry: policyRegistry({
+                        evaluator: "globs",
+                        rules: [{ decision: "require_approval", paths: ["src/**"] }],
+                    }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            expect(result.parked).toBeUndefined();
+            expect(seen).toHaveLength(1);
+            expect(calls.some((c) => c.includes("add"))).toBe(true);
+        });
+
+        it("PROCEEDS when declared paths hit only allow", async () => {
+            const tracker = new FakeTracker(declaringIssue("Tweak src/core/run.ts behavior."));
+            const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
+            const { git } = fakeGit();
+            const { fs } = memRunsFs();
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    config: autonomousConfig,
+                    driver,
+                    git,
+                    registry: policyRegistry({ evaluator: "globs", rules: [{ decision: "allow", paths: ["src/**"] }] }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            expect(result.parked).toBeUndefined();
+            expect(seen).toHaveLength(1);
+        });
+
+        it("PROCEEDS (conservative) when the issue declares no paths, even under a block rule", async () => {
+            const tracker = new FakeTracker(declaringIssue("The deploy keeps failing; please make it work again."));
+            const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
+            const { git } = fakeGit();
+            const { fs } = memRunsFs();
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    config: autonomousConfig,
+                    driver,
+                    git,
+                    registry: policyRegistry({
+                        evaluator: "globs",
+                        rules: [{ decision: "block", paths: ["infra/**"] }],
+                    }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            expect(result.parked).toBeUndefined();
+            expect(seen).toHaveLength(1);
+        });
+
+        it("is SKIPPED when the policy evaluator is off", async () => {
+            const tracker = new FakeTracker(declaringIssue("Rotate the secrets in infra/secrets.tf for the deploy."));
+            const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
+            const { git } = fakeGit();
+            const { fs } = memRunsFs();
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    config: autonomousConfig,
+                    driver,
+                    git,
+                    registry: policyRegistry({ evaluator: "off" }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            expect(result.parked).toBeUndefined();
+            expect(seen).toHaveLength(1);
+        });
+
+        it("is SKIPPED for a non-implement job kind even when declared paths hit a block rule", async () => {
+            const tracker = new FakeTracker(
+                makeIssue({
+                    body: "Rotate the secrets in infra/secrets.tf for the deploy.",
+                    meta: { jobKind: "triage", runMode: "autonomous" },
+                }),
+            );
+            const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
+            const { git } = fakeGit();
+            const { fs } = memRunsFs();
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    config: autonomousConfig,
+                    driver,
+                    git,
+                    registry: policyRegistry({
+                        evaluator: "globs",
+                        rules: [{ decision: "block", paths: ["infra/**"] }],
+                    }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            expect(result.parked).toBeUndefined();
+            expect(seen).toHaveLength(1);
+        });
+
+        it("blocks via the agentowners evaluator using the injected reader against the base repo", async () => {
+            const tracker = new FakeTracker(declaringIssue("Rotate the secrets in infra/secrets.tf for the deploy."));
+            const { driver, seen } = fakeDriver({ status: "done", summary: "s" });
+            const { git, calls } = fakeGit();
+            const { fs } = memRunsFs();
+            const readPaths: string[] = [];
+            const result = await runIssue(
+                "CG-42",
+                {},
+                deps({
+                    config: autonomousConfig,
+                    driver,
+                    git,
+                    policyReader: async (path: string): Promise<string | undefined> => {
+                        readPaths.push(path);
+                        return "infra/** block\n";
+                    },
+                    registry: policyRegistry({ evaluator: "agentowners" }),
+                    runsFs: fs,
+                    tracker,
+                }),
+            );
+
+            expect(result.parked).toBe("preflight");
+            expect(seen).toHaveLength(0);
+            expect(calls.some((c) => c.includes("add"))).toBe(false);
+            // The AGENTOWNERS file is read from the BASE repo (exists pre-worktree).
+            expect(readPaths.some((p) => p.startsWith("/repo/bin"))).toBe(true);
+        });
     });
 
     // A tracker that records issueContext calls and returns a configurable context,

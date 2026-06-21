@@ -12,7 +12,11 @@ import type {
     Tracker,
 } from "../trackers/tracker.ts";
 import type { Logger } from "./run.ts";
+import type { RunStoreFs } from "./runstore.ts";
+import { nodeRunStoreFs } from "./runstore.ts";
+import { scaffoldAgentowners } from "./scaffold.ts";
 import { beflowBoardTemplate } from "./template.ts";
+import { expandHome } from "./worktree.ts";
 
 // The interactive create boundary: given the missing key + active tracker, gather
 // a project-create spec plus the config entry to write back. Injected so the
@@ -33,6 +37,7 @@ export interface SetupDeps {
     askProjectSpec?: AskProjectSpec;
     persist?: (dir: string, key: string, project: Project) => void;
     dir?: string;
+    scaffoldFs?: RunStoreFs;
 }
 
 async function defaultResolveModuleChanges(change: ModuleChange): Promise<Record<string, ModuleChangeAction>> {
@@ -200,5 +205,29 @@ export async function setupProject(projectKey: string, deps: SetupDeps): Promise
         }
     }
 
+    scaffoldControlPlane(deps.registry.projects[projectKey], deps.scaffoldFs ?? nodeRunStoreFs, log);
+
     return result;
+}
+
+// Drop the recommended control-plane AGENTOWNERS into every repo the project maps,
+// skipping any repo that already has one. Activating the file is a separate, explicit
+// Step (policy.evaluator = "agentowners"); setup only scaffolds, never mutates config.
+function scaffoldControlPlane(project: Project | undefined, fs: RunStoreFs, log: Logger): void {
+    if (project === undefined) {
+        return;
+    }
+    let wroteAny = false;
+    for (const repoPath of new Set(Object.values(project.repos))) {
+        const { path, written } = scaffoldAgentowners(expandHome(repoPath), fs);
+        if (written) {
+            log(`beflow: wrote recommended control-plane AGENTOWNERS to ${path}`);
+            wroteAny = true;
+        } else {
+            log(`beflow: AGENTOWNERS already present at ${path} — left untouched`);
+        }
+    }
+    if (wroteAny) {
+        log('beflow: to activate the gate, set policy.evaluator = "agentowners" in your beflow config');
+    }
 }

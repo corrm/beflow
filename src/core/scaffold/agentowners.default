@@ -1,0 +1,5 @@
+# beflow recommended control-plane AGENTOWNERS
+# These paths define how "passing" is decided and how the repo ships, so changes
+# to them require human approval before merge. Tune to taste.
+tests/** require_approval
+.github/** require_approval

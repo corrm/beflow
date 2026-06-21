@@ -533,9 +533,27 @@ describe("runCli help", () => {
 });
 
 describe("runCli setup", () => {
+    function memFs(): RunStoreFs {
+        const store = new Map<string, string>();
+        return {
+            append: (path, data) => {
+                store.set(path, (store.get(path) ?? "") + data);
+            },
+            list: () => [],
+            read: (path) => store.get(path) ?? null,
+            remove: (path) => {
+                store.delete(path);
+            },
+            write: (path, data) => {
+                store.set(path, data);
+            },
+        };
+    }
+
     it("setup CG calls the tracker ensureBoard path", async () => {
         const tracker = new SetupTracker();
         const { deps } = harness(tracker);
+        deps.runsFs = memFs();
         const code = await runCli(["setup", "CG"], deps);
         expect(code).toBe(0);
         expect(tracker.ensureBoardCalls).toHaveLength(1);
@@ -556,6 +574,7 @@ describe("runCli setup", () => {
             ...config,
             agents: { claude: { command: "claude" }, zeta: { command: "zeta" } },
         });
+        deps.runsFs = memFs();
         const code = await runCli(["setup", "CG"], deps);
         expect(code).toBe(0);
         const labels = tracker.ensureBoardCalls[0]!.labels.map((l) => l.name);

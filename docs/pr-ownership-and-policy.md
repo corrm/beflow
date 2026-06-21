@@ -51,21 +51,27 @@ these steps:
    `minBodyChars` threshold, it is parked to **Needs Input** before any worktree
    is created, so no agent run is burned on an under-specified issue.
 
-3. **Create worktree** — beflow creates an isolated git worktree at
+3. **Policy preflight** — the configured policy is run against the coarse file
+   paths the issue _declares_ in its title and body, before any worktree is
+   created. If that declared scope hits a `block` rule, the issue is parked to
+   **Needs Input** immediately. See [The policy preflight](#the-policy-preflight)
+   below; the post-run gate (step 9) remains authoritative.
+
+4. **Create worktree** — beflow creates an isolated git worktree at
    `beflow/<key>` (under `worktrees.dir`). The agent runs inside it.
 
-4. **Agent run** — the agent commits and pushes its branch. The contract
+5. **Agent run** — the agent commits and pushes its branch. The contract
    explicitly instructs it not to open a PR; that step belongs to beflow.
 
-5. **No-op check** — after the agent reports `done`, beflow checks whether the
+6. **No-op check** — after the agent reports `done`, beflow checks whether the
    branch has any commits ahead of the base. If not (empty output), the run is
    parked as **failed** and the worktree is kept for inspection.
 
-6. **Open draft PR** — beflow opens a draft PR titled
+7. **Open draft PR** — beflow opens a draft PR titled
    `[beflow] <KEY>: <title>` from the pushed branch. The draft is the review
    artifact for the rest of the pipeline.
 
-7. **Quality gate** — if `qualityGate.commands` are configured, they run in the
+8. **Quality gate** — if `qualityGate.commands` are configured, they run in the
    worktree. On RED, the agent is re-prompted with the failing output up to
    `qualityGate.maxRework` times (default 1; `0` disables auto-rework), re-checking
    after each. If it is still RED once the rework budget is exhausted, the run is
@@ -85,11 +91,45 @@ these steps:
    baseline. Pinning engages only for beflow-owned runs (where the base branch and
    diff are known) and is off when the globs are unset.
 
-8. **Post-run policy** — beflow evaluates the configured policy over the diff
+9. **Post-run policy** — beflow evaluates the configured policy over the diff
    and decides the PR's fate (see [Policy outcomes](#policy-outcomes) below).
 
-9. **Write back** — the board is updated and a comment is posted with the run
-   summary and PR link.
+10. **Write back** — the board is updated and a comment is posted with the run
+    summary and PR link.
+
+---
+
+## The policy preflight
+
+The post-run gate (step 9) is authoritative: it judges the run's **actual diff**.
+But that judgement only happens after beflow has built a worktree and spent a
+full agent run (30–40 min) producing the diff. The preflight (step 3) is a cheap
+fail-fast that runs the **same resolved policy** earlier, against the file paths
+the issue declares, so a task that would _certainly_ be blocked is parked to
+**Needs Input** before any of that work begins.
+
+It is deliberately conservative — a false block is harmful, so the preflight
+errs toward proceeding:
+
+- **Coarse paths only.** The only signal is path-like tokens in the issue's
+  title and body — a token with a path separator and a file extension
+  (`infra/deploy.yaml`, `tests/x.test.ts`) or a dotfile-rooted path
+  (`.github/workflows/ci.yml`). Prose, URLs, and bare identifiers are ignored.
+- **Block-only short-circuit.** The preflight parks **only** on a confident
+  `block` decision. `require_approval` and `allow` proceed normally; the
+  post-run gate decides those over the real diff.
+- **Empty signal proceeds.** If the issue declares no path-like tokens, the
+  preflight does nothing — it never short-circuits on no evidence.
+- **Same engage conditions as the post-run gate.** It runs only for an
+  autonomous `implement` run with an active policy (`evaluator` is not `off`).
+- **Same evaluator.** It reuses `resolvePolicy` + `evaluatePolicy` — one
+  resolver, two call points. For the `agentowners` evaluator it reads
+  `.github/AGENTOWNERS` from the **base repo** (which exists pre-worktree).
+
+The honest caveat: the preflight is only as sharp as the paths an issue
+declares. An issue that hides its blast radius in prose will sail past it and be
+caught by the authoritative post-run gate instead. The preflight never _weakens_
+that gate; it only short-circuits the unambiguous cases early.
 
 ---
 
@@ -275,6 +315,37 @@ agent cannot edit in the same change it governs. A relative in-repo path (the
 default `.github/AGENTOWNERS`) is editable by the agent in the same change — if
 that matters for your threat model, use an out-of-repo absolute path, or switch
 to `evaluator: "command"` where you own the trust call entirely.
+
+#### Recommended default (control-plane by default)
+
+`beflow setup <PROJECT>` scaffolds a recommended `.github/AGENTOWNERS` into every
+repo the project maps, so the out-of-the-box posture protects the control plane —
+the paths that decide how "passing" is judged and how the repo ships. Existing
+AGENTOWNERS files are never overwritten; setup logs which files it wrote versus
+skipped.
+
+```
+# beflow recommended control-plane AGENTOWNERS
+# These paths define how "passing" is decided and how the repo ships, so changes
+# to them require human approval before merge. Tune to taste.
+tests/** require_approval
+.github/** require_approval
+```
+
+`.github/**` covers CI (`.github/workflows`) and the AGENTOWNERS file itself
+(`.github/AGENTOWNERS`), so the gate is self-protecting. Both control-plane paths
+default to `require_approval`, not `block`: a run that touches them still opens a
+PR, but it stays a draft awaiting human sign-off.
+
+Scaffolding only writes the file — it does **not** activate the gate. To turn it
+on, set the evaluator in your beflow config (setup prints this reminder after it
+writes a file):
+
+```json
+"policy": {
+  "evaluator": "agentowners"
+}
+```
 
 #### `evaluator: "command"` example
 

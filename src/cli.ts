@@ -582,7 +582,7 @@ function cmdRuns(args: { key?: string | undefined }, ctx: CliContext): number {
 }
 
 async function cmdSetup(args: { project: string; prune?: boolean | undefined }, ctx: CliContext): Promise<number> {
-    const { tracker, config, registry, dir, log } = ctx;
+    const { deps, tracker, config, registry, dir, log } = ctx;
     const agents = [...new Set([config.agent, ...Object.keys(config.agents)])].sort();
     await setupProject(args.project, {
         agents,
@@ -590,6 +590,7 @@ async function cmdSetup(args: { project: string; prune?: boolean | undefined }, 
         log,
         prune: args.prune === true,
         registry,
+        ...(deps.runsFs !== undefined ? { scaffoldFs: deps.runsFs } : {}),
         tracker,
         trackerName: config.tracker,
     });

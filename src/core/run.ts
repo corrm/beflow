@@ -20,10 +20,11 @@ import { injectAcpxMcp, nodeMcpFs } from "./mcp.ts";
 import type { McpFs, McpServer } from "./mcp.ts";
 import { escalationDetail, notifyEscalation } from "./notify.ts";
 import type { Notifier } from "./notify.ts";
-import { computeChangedFiles, defaultPolicyExec, evaluatePolicy } from "./policy.ts";
-import type { PolicyExec, PolicyResult } from "./policy.ts";
+import { computeChangedFiles, defaultPolicyExec, defaultPolicyReader, evaluatePolicy } from "./policy.ts";
+import type { PolicyExec, PolicyReader, PolicyResult } from "./policy.ts";
 import { closePr, detectBaseBranch, editPr, hasCommits, markReady, openDraftPr } from "./pr.ts";
 import type { PrRef } from "./pr.ts";
+import { derivePreflightPaths, PREFLIGHT_BLOCK_MESSAGE } from "./preflight.ts";
 import type { PromptResolveDeps, PromptSet } from "./prompts.ts";
 import { loadDecisionReceiptPrompt, renderContract, renderLinkedContext, renderTask } from "./prompts.ts";
 import {
@@ -272,6 +273,7 @@ export interface RunIssueDeps {
     gateExec?: GateExec;
     prExec?: Exec;
     policyExec?: PolicyExec;
+    policyReader?: PolicyReader;
     decisionSink?: DecisionSink;
     promptResolveDeps?: PromptResolveDeps;
 }
@@ -319,7 +321,7 @@ export interface RunResult {
     cwd: string;
     result: AgentRunResult;
     applied?: WritebackResult;
-    parked?: "decision" | "thin";
+    parked?: "decision" | "thin" | "preflight";
 }
 
 export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIssueDeps): Promise<RunResult> {
@@ -357,6 +359,9 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
     // We never burn an agent run on an issue an agent can't act on safely.
     const hasResumablePrior = prior !== null && RESUME_STATUSES.has(prior.status) && pathExists(prior.cwd);
     const isFreshDispatch = deps.continuation === undefined && !hasResumablePrior;
+    // Resolved once and shared by the pre-worktree preflight (below) and the
+    // Authoritative post-diff gate (after the run): one resolver, two call points.
+    const resolvedPolicy = resolvePolicy(deps.config, deps.registry, projectKeyOf(key));
     if (isFreshDispatch) {
         // DECISION GATE (always on; the per-issue label IS the opt-in): an explicit
         // `needs-decision` label outranks the thin heuristic, so it is checked first.
@@ -418,6 +423,61 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                 },
             };
         }
+
+        // PRE-WORKTREE PREFLIGHT (conservative): under the SAME engage conditions as
+        // The authoritative post-diff gate (autonomous implement run; policy active),
+        // Run that policy against the COARSE file paths the issue declares, before any
+        // Worktree is built. Short-circuit to Needs Input ONLY on a confident `block`
+        // — a require_approval/allow proceeds, an issue that declares no paths proceeds,
+        // And the post-diff gate over the real diff stays authoritative for everything.
+        if (
+            resolved.runMode === "autonomous" &&
+            resolved.jobKind === "implement" &&
+            resolvedPolicy.evaluator !== "off"
+        ) {
+            const coarsePaths = derivePreflightPaths(issue.title, issue.body);
+            if (coarsePaths.length > 0) {
+                const decision = await evaluatePolicy(
+                    {
+                        agent: resolved.agent,
+                        baseBranch: "",
+                        changedFiles: coarsePaths,
+                        issueKey: key,
+                        jobKind: resolved.jobKind,
+                        repo: resolved.repo,
+                    },
+                    resolvedPolicy,
+                    deps.policyExec ?? defaultPolicyExec,
+                    resolved.repoPath,
+                    deps.policyReader ?? defaultPolicyReader,
+                );
+                if (decision.decision === "block") {
+                    const report: Report = { status: "needs_input", summary: PREFLIGHT_BLOCK_MESSAGE };
+                    const applied = await applyReport(deps.tracker, issue, report, resolved.jobKind);
+                    await notifyEscalation(
+                        deps.notify,
+                        issue,
+                        "needs_input",
+                        `preflight: declared scope hits a policy block (${decision.reason})`,
+                    );
+                    log(`beflow: ${key} parked: preflight policy block on declared scope → Needs Input`);
+                    return {
+                        applied,
+                        cwd: resolved.repoPath,
+                        issue,
+                        parked: "preflight",
+                        resolved,
+                        result: {
+                            exitCode: 0,
+                            raw: [],
+                            report,
+                            stream: { assistantText: "", toolCalls: [] },
+                            timedOut: false,
+                        },
+                    };
+                }
+            }
+        }
     }
 
     let cwd = resolved.repoPath;
@@ -460,7 +520,6 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
     // Runs the post-run policy gate. This only engages for an autonomous implement run
     // With a worktree branch; every other shape keeps the agent-owned behavior.
     const resolvedPr = resolvePr(deps.config, deps.registry, projectKeyOf(key));
-    const resolvedPolicy = resolvePolicy(deps.config, deps.registry, projectKeyOf(key));
     const beflowOwned =
         resolvedPr.owner === "beflow" && useWorktree && effectiveJobKind === "implement" && branch !== undefined;
 
@@ -872,6 +931,7 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                 resolvedPolicy,
                 policyExec,
                 cwd,
+                deps.policyReader ?? defaultPolicyReader,
             );
         } catch (err) {
             log(

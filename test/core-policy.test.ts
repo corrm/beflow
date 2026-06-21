@@ -137,6 +137,57 @@ describe("evaluatePolicy command", () => {
         expect(res).toEqual({ decision: "require_approval", matchedRules: [], reason: "needs review" });
     });
 
+    it("pipes the change receipt to the command on stdin", async () => {
+        let seenStdin = "";
+        const exec: PolicyExec = async (_argv, _cwd, stdin) => {
+            seenStdin = stdin;
+            return { exitCode: 0, stderr: "", stdout: '{"decision":"allow"}' };
+        };
+        const context = contextWith({
+            changedFiles: ["src/a.ts"],
+            receipt: { intent: "add a login route", riskSurfaces: ["app", "auth"] },
+        });
+        await evaluatePolicy(context, commandPolicy(["policy.sh"]), exec, "/wt");
+        const parsed: unknown = JSON.parse(seenStdin);
+        expect(parsed).toMatchObject({
+            receipt: { intent: "add a login route", riskSurfaces: ["app", "auth"] },
+        });
+    });
+
+    it("lets the command return require_approval informed by the receipt's risk surfaces", async () => {
+        const exec: PolicyExec = async (_argv, _cwd, stdin) => {
+            const parsed: unknown = JSON.parse(stdin);
+            const surfaces =
+                typeof parsed === "object" &&
+                parsed !== null &&
+                "receipt" in parsed &&
+                typeof parsed.receipt === "object" &&
+                parsed.receipt !== null &&
+                "riskSurfaces" in parsed.receipt &&
+                Array.isArray(parsed.receipt.riskSurfaces)
+                    ? parsed.receipt.riskSurfaces
+                    : [];
+            return surfaces.includes("auth")
+                ? { exitCode: 0, stderr: "", stdout: '{"decision":"require_approval","reason":"auth surface"}' }
+                : { exitCode: 0, stderr: "", stdout: '{"decision":"allow"}' };
+        };
+        const flagged = await evaluatePolicy(
+            contextWith({ receipt: { intent: "x", riskSurfaces: ["auth"] } }),
+            commandPolicy(["policy.sh"]),
+            exec,
+            "/wt",
+        );
+        expect(flagged.decision).toBe("require_approval");
+        expect(flagged.reason).toBe("auth surface");
+        const clean = await evaluatePolicy(
+            contextWith({ receipt: { intent: "x", riskSurfaces: ["app"] } }),
+            commandPolicy(["policy.sh"]),
+            exec,
+            "/wt",
+        );
+        expect(clean.decision).toBe("allow");
+    });
+
     it("throws on garbage (non-JSON) output", async () => {
         const exec: PolicyExec = async () => ({ exitCode: 0, stderr: "", stdout: "not json" });
         expect(evaluatePolicy(contextWith(), commandPolicy(["p"]), exec, "/wt")).rejects.toThrow(/non-JSON/);

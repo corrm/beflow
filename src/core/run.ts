@@ -952,6 +952,7 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                     issueKey: key,
                     jobKind: effectiveJobKind,
                     repo: resolved.repo,
+                    ...(result.report.receipt !== undefined ? { receipt: result.report.receipt } : {}),
                 },
                 resolvedPolicy,
                 policyExec,

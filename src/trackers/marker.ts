@@ -12,7 +12,7 @@ export function hasMarker(text: string): boolean {
 }
 
 export function stripMarker(text: string): string {
-    const idx = text.lastIndexOf("\n\n— beflow");
+    const idx = text.lastIndexOf("— beflow");
     if (idx === -1) {
         return text.trimEnd();
     }

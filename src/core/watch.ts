@@ -354,9 +354,17 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
             if (!(await deps.prMerged(record.prUrl))) {
                 continue;
             }
-            await deps.tracker.updateState(item, DONE_STATE);
-            if (record.escalatedAt !== undefined) {
-                await notifyEscalation(deps.notify, item, "resolved", "Merged and closed.");
+            // Re-read fresh right before the promote: a human may have moved the card
+            // Out of In Review in the window since the tick-top snapshot. beflow is done
+            // With it either way (the PR is merged), so still clean up, but never
+            // Override the human's chosen state.
+            const fresh = await deps.tracker.getIssue(item.key);
+            const stillInReview = fresh.state.name === "In Review";
+            if (stillInReview) {
+                await deps.tracker.updateState(item, DONE_STATE);
+                if (record.escalatedAt !== undefined) {
+                    await notifyEscalation(deps.notify, item, "resolved", "Merged and closed.");
+                }
             }
             if (deps.git !== undefined && record.cwd) {
                 try {
@@ -366,9 +374,16 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
                 }
             }
             deleteRecord(runsDir, item.key, deps.runsFs);
-            log(`beflow: watch ${projectKey} — ${item.key} merged → Done`);
-            didComplete = true;
-            completedKeys.add(item.key);
+            if (stillInReview) {
+                log(`beflow: watch ${projectKey} — ${item.key} merged → Done`);
+                didComplete = true;
+                completedKeys.add(item.key);
+            } else {
+                log(
+                    `beflow: watch ${projectKey} — ${item.key} merged but card now ${fresh.state.name}; not promoting, handed off`,
+                );
+                completedKeys.add(item.key);
+            }
         }
         if (completedKeys.size > 0) {
             inReview = inReview.filter((i) => !completedKeys.has(i.key));
@@ -538,6 +553,17 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
         if (isDecisionHeld(item.labels)) {
             continue; // decision still pending
         }
+        // Re-read fresh right before the release: a human may have moved the card out
+        // Of Needs Input in the window since the tick-top snapshot. If so, hand off
+        // Cleanly — drop the hold record but never override the human's chosen state.
+        const fresh = await deps.tracker.getIssue(item.key);
+        if (fresh.state.name !== "Needs Input") {
+            deleteRecord(runsDir, item.key, deps.runsFs);
+            log(
+                `beflow: watch ${projectKey} — ${item.key} decision made but card now ${fresh.state.name}; not releasing, handed off`,
+            );
+            continue;
+        }
         await deps.tracker.updateState(item, "Todo");
         if (record.escalatedAt !== undefined) {
             await notifyEscalation(deps.notify, item, "resolved", "Decision made; released to Todo.");
@@ -557,6 +583,17 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
         }
         if (item.labels.includes(QUARANTINED_LABEL)) {
             continue; // still quarantined
+        }
+        // Re-read fresh right before the release: a human may have moved the card out
+        // Of Needs Input in the window since the tick-top snapshot. If so, hand off
+        // Cleanly — drop the hold record but never override the human's chosen state.
+        const fresh = await deps.tracker.getIssue(item.key);
+        if (fresh.state.name !== "Needs Input") {
+            deleteRecord(runsDir, item.key, deps.runsFs);
+            log(
+                `beflow: watch ${projectKey} — ${item.key} quarantine cleared but card now ${fresh.state.name}; not releasing, handed off`,
+            );
+            continue;
         }
         await deps.tracker.updateState(item, "Todo");
         if (record.escalatedAt !== undefined) {

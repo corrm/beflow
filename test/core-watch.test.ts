@@ -919,7 +919,11 @@ describe("watchTick", () => {
     });
 
     it("auto-Done: moves a merged In-Review item to Done and deletes its record", async () => {
-        const tracker = new WatchTracker({ inReview: [issue({ key: "CG-3" })], todo: [] });
+        const tracker = new WatchTracker({
+            inReview: [issue({ key: "CG-3" })],
+            issueStates: { "CG-3": { group: "started", name: "In Review" } },
+            todo: [],
+        });
         const { fs } = memRunsFs();
         saveRecord(
             "/runs",
@@ -967,6 +971,62 @@ describe("watchTick", () => {
         expect(out).toEqual({ action: "idle" });
         expect(tracker.calls.stateUpdates).toHaveLength(0);
         expect(loadRecord("/runs", "CG-3", fs)).not.toBeNull();
+    });
+
+    it("auto-Done race: a human move after the snapshot cleans up but does NOT promote to Done", async () => {
+        // listQueue reports CG-3 In Review (tick-top snapshot), but the fresh re-read
+        // Right before the promote shows the human already moved it to Done. beflow
+        // Cleans up (PR is merged) but must NOT override the human's state.
+        const tracker = new WatchTracker({
+            inReview: [issue({ key: "CG-3" })],
+            issueStates: { "CG-3": { group: "completed", name: "Done" } },
+            todo: [],
+        });
+        const { fs } = memRunsFs();
+        const gitCalls: string[][] = [];
+        const logs: string[] = [];
+        saveRecord(
+            "/runs",
+            {
+                agent: "claude",
+                cwd: "/wt/cg-3",
+                key: "CG-3",
+                jobKind: "implement",
+                prUrl: "https://github.com/x/y/pull/1",
+                repoPath: "/repo/bin",
+                runMode: "autonomous",
+                sessionName: "CG-3",
+                status: "done",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+            fs,
+        );
+        const { driver, seen } = fakeDriver();
+        const out = await watchTick(
+            "CG",
+            deps({
+                driver,
+                git: async (cmd, args) => {
+                    gitCalls.push([cmd, ...args]);
+                    return { code: 0, stderr: "", stdout: "" };
+                },
+                log: (m) => {
+                    logs.push(m);
+                },
+                prMerged: async () => true,
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        // No promote to Done — the human's state stands.
+        expect(tracker.calls.stateUpdates).toHaveLength(0);
+        // The PR is merged, so beflow still cleans up: worktree removed, record dropped.
+        expect(gitCalls.some((c) => c.includes("remove"))).toBe(true);
+        expect(loadRecord("/runs", "CG-3", fs)).toBeNull();
+        expect(seen).toHaveLength(0);
+        // The handoff is logged and the tick falls through to idle (no completed action).
+        expect(logs.some((m) => m.includes("CG-3") && m.includes("handed off"))).toBe(true);
+        expect(out).toEqual({ action: "idle" });
     });
 
     it("rework: dispatches with a continuation and removes the label when feedback is present", async () => {
@@ -1542,7 +1602,11 @@ describe("watchTick SLA re-escalation", () => {
     });
 
     it("fires a resolved ping when a merged→Done item had a prior escalation", async () => {
-        const tracker = new WatchTracker({ inReview: [issue({ key: "CG-3" })], todo: [] });
+        const tracker = new WatchTracker({
+            inReview: [issue({ key: "CG-3" })],
+            issueStates: { "CG-3": { group: "started", name: "In Review" } },
+            todo: [],
+        });
         const { fs } = memRunsFs();
         saveRecord(
             "/runs",
@@ -1594,6 +1658,7 @@ describe("watchTick decision-gate release", () => {
     it("releases a decision-hold back to Todo once the needs-decision label is removed", async () => {
         const tracker = new WatchTracker({
             inReview: [],
+            issueStates: { "CG-4": { group: "started", name: "Needs Input" } },
             needsInput: [issue({ key: "CG-4", labels: [] })],
             todo: [],
         });
@@ -1624,6 +1689,40 @@ describe("watchTick decision-gate release", () => {
         expect(seen).toHaveLength(0);
     });
 
+    it("decision-release race: a human move after the snapshot drops the hold but does NOT release to Todo", async () => {
+        // The label is gone (decision made) so the pass would release, but the fresh
+        // Re-read shows the human already moved the card out of Needs Input. Hand off
+        // Cleanly: drop the record, no state write.
+        const tracker = new WatchTracker({
+            inReview: [],
+            issueStates: { "CG-4": { group: "completed", name: "Done" } },
+            needsInput: [issue({ key: "CG-4", labels: [] })],
+            todo: [],
+        });
+        const { fs } = memRunsFs();
+        decisionRecord(fs);
+        const { driver, seen } = fakeDriver();
+        const logs: string[] = [];
+        const out = await watchTick(
+            "CG",
+            deps({
+                driver,
+                log: (m) => {
+                    logs.push(m);
+                },
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        // No release to Todo — the human's state stands.
+        expect(tracker.calls.stateUpdates).toHaveLength(0);
+        // The hold record is dropped, the tick falls through to idle.
+        expect(loadRecord("/runs", "CG-4", fs)).toBeNull();
+        expect(out).toEqual({ action: "idle" });
+        expect(seen).toHaveLength(0);
+        expect(logs.some((m) => m.includes("CG-4") && m.includes("handed off"))).toBe(true);
+    });
+
     it("does NOT re-dispatch via the answered loop while still needs-decision labeled (guard)", async () => {
         // A new human comment must NOT bypass an undecided hold: the answered loop skips
         // A still-labeled item, leaving it parked until the label is removed.
@@ -1647,6 +1746,7 @@ describe("watchTick decision-gate release", () => {
     it("fires a resolved ping on release only when the record had escalatedAt", async () => {
         const tracker = new WatchTracker({
             inReview: [],
+            issueStates: { "CG-4": { group: "started", name: "Needs Input" } },
             needsInput: [issue({ key: "CG-4", labels: [] })],
             todo: [],
         });
@@ -1662,6 +1762,7 @@ describe("watchTick decision-gate release", () => {
     it("does NOT fire a resolved ping on release when the record had no escalatedAt", async () => {
         const tracker = new WatchTracker({
             inReview: [],
+            issueStates: { "CG-4": { group: "started", name: "Needs Input" } },
             needsInput: [issue({ key: "CG-4", labels: [] })],
             todo: [],
         });
@@ -1894,6 +1995,7 @@ describe("watchTick unified quarantine", () => {
     it("release: clears the hold and returns to Todo once the quarantined label is removed", async () => {
         const tracker = new WatchTracker({
             inReview: [],
+            issueStates: { "CG-9": { group: "started", name: "Needs Input" } },
             needsInput: [issue({ key: "CG-9", labels: [] })],
             todo: [],
         });
@@ -1957,9 +2059,60 @@ describe("watchTick unified quarantine", () => {
         expect(seen).toHaveLength(0);
     });
 
+    it("quarantine-release race: a human move after the snapshot drops the hold but does NOT release to Todo", async () => {
+        // The quarantined label is gone (human cleared it) so the pass would release,
+        // But the fresh re-read shows the human already moved the card out of Needs
+        // Input. Hand off cleanly: drop the record (do NOT clear-the-hold save), no
+        // State write.
+        const tracker = new WatchTracker({
+            inReview: [],
+            issueStates: { "CG-9": { group: "cancelled", name: "Cancelled" } },
+            needsInput: [issue({ key: "CG-9", labels: [] })],
+            todo: [],
+        });
+        const { fs } = memRunsFs();
+        saveRecord(
+            "/runs",
+            {
+                agent: "claude",
+                attempts: 3,
+                cwd: "/repo/bin",
+                heldReason: "quarantine",
+                jobKind: "implement",
+                key: "CG-9",
+                runMode: "autonomous",
+                sessionName: "CG-9",
+                status: "failed",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+            fs,
+        );
+        const { driver, seen } = fakeDriver();
+        const logs: string[] = [];
+        const out = await watchTick(
+            "CG",
+            deps({
+                driver,
+                log: (m) => {
+                    logs.push(m);
+                },
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        // No release to Todo — the human's state stands.
+        expect(tracker.calls.stateUpdates).toHaveLength(0);
+        // The hold record is dropped (not re-saved with the hold cleared).
+        expect(loadRecord("/runs", "CG-9", fs)).toBeNull();
+        expect(out).toEqual({ action: "idle" });
+        expect(seen).toHaveLength(0);
+        expect(logs.some((m) => m.includes("CG-9") && m.includes("handed off"))).toBe(true);
+    });
+
     it("fires a resolved ping on release only when the record had escalatedAt", async () => {
         const tracker = new WatchTracker({
             inReview: [],
+            issueStates: { "CG-9": { group: "started", name: "Needs Input" } },
             needsInput: [issue({ key: "CG-9", labels: [] })],
             todo: [],
         });

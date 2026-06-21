@@ -200,9 +200,11 @@
           "properties": {
             "dir": {
               "type": "string"
+            },
+            "comment": {
+              "type": "boolean"
             }
           },
-          "required": ["dir"],
           "additionalProperties": false
         },
         "tools": {

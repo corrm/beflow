@@ -11,8 +11,9 @@ import type { Issue, JobKind, Resolved } from "../model/types.ts";
 import { resolve, resolvePolicy, resolvePr } from "../resolve/precedence.ts";
 import type { Comment, Tracker } from "../trackers/tracker.ts";
 import { renderContinuation } from "./continuation.ts";
+import { TrackerCommentSink } from "./decision-receipt.ts";
 import { DECISION_HOLD_MESSAGE, isDecisionHeld } from "./decision.ts";
-import { buildDecisionEvent, LocalNdjsonSink, resolveDecisionsDir } from "./decisionlog.ts";
+import { buildDecisionEvent, CompositeSink, LocalNdjsonSink, resolveDecisionsDir } from "./decisionlog.ts";
 import type { DecisionSink } from "./decisionlog.ts";
 import { isThinIssue, resolveMinBodyChars, THIN_ISSUE_MESSAGE } from "./inputquality.ts";
 import { injectAcpxMcp, nodeMcpFs } from "./mcp.ts";
@@ -23,8 +24,8 @@ import { computeChangedFiles, defaultPolicyExec, evaluatePolicy } from "./policy
 import type { PolicyExec, PolicyResult } from "./policy.ts";
 import { closePr, detectBaseBranch, editPr, hasCommits, markReady, openDraftPr } from "./pr.ts";
 import type { PrRef } from "./pr.ts";
-import type { PromptSet } from "./prompts.ts";
-import { renderContract, renderLinkedContext, renderTask } from "./prompts.ts";
+import type { PromptResolveDeps, PromptSet } from "./prompts.ts";
+import { loadDecisionReceiptPrompt, renderContract, renderLinkedContext, renderTask } from "./prompts.ts";
 import {
     defaultGateExec,
     pinBaselineTests,
@@ -46,7 +47,38 @@ const IN_PROGRESS_STATE = "In Progress";
 const DEFAULT_MANUAL_MOVE_POLL_MS = 15000;
 const SECONDS_PER_MINUTE = 60;
 
+// Fallback for programmatic callers that pass no `promptResolveDeps`: resolves
+// every prompt candidate as missing, so the compiled-in template wins without
+// touching the filesystem. cli.ts always supplies real deps.
+const COMPILED_ONLY_RESOLVE_DEPS: PromptResolveDeps = {
+    configDir: "",
+    exists: () => false,
+    home: "",
+    read: () => "",
+};
+
 export type Logger = (msg: string) => void;
+
+/**
+ * The default decision sink: the durable NDJSON log, paired (unless
+ * `decisions.comment === false`) with a best-effort tracker receipt comment.
+ * Ordered `[local, tracker]` so the audit write lands before the ephemeral
+ * receipt. Pure and dependency-injected so the gate is unit-testable.
+ */
+export function buildDefaultDecisionSink(
+    config: Config,
+    tracker: Tracker,
+    issue: Issue,
+    runsFs: RunStoreFs | undefined,
+    receiptTemplate: string,
+    log: Logger,
+): DecisionSink {
+    const local = new LocalNdjsonSink(resolveDecisionsDir(config.decisions?.dir), runsFs);
+    if (config.decisions?.comment === false) {
+        return local;
+    }
+    return new CompositeSink([local, new TrackerCommentSink(tracker, issue, receiptTemplate, log)]);
+}
 
 /**
  * A human has pulled an issue out of beflow's hands when its CURRENT state group
@@ -241,6 +273,7 @@ export interface RunIssueDeps {
     prExec?: Exec;
     policyExec?: PolicyExec;
     decisionSink?: DecisionSink;
+    promptResolveDeps?: PromptResolveDeps;
 }
 
 const RESUME_STATUSES: ReadonlySet<RunRecord["status"]> = new Set([
@@ -852,8 +885,10 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
         // Write the canonical, append-only decision event BEFORE any writeback (and,
         // Critically, before the allow path's deleteRecord can run): the tracker
         // Comment is ephemeral, the run record is GC'd, but this log survives both.
+        const receiptTemplate = loadDecisionReceiptPrompt(deps.promptResolveDeps ?? COMPILED_ONLY_RESOLVE_DEPS);
         const sink =
-            deps.decisionSink ?? new LocalNdjsonSink(resolveDecisionsDir(deps.config.decisions?.dir), deps.runsFs);
+            deps.decisionSink ??
+            buildDefaultDecisionSink(deps.config, deps.tracker, issue, deps.runsFs, receiptTemplate, log);
         await sink.emit(
             buildDecisionEvent(
                 {

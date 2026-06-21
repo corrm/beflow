@@ -239,6 +239,9 @@ function timedOutDriver(): { driver: AgentDriver; seen: RunOptions[] } {
 function memRunsFs(): { fs: RunStoreFs; store: Map<string, string> } {
     const store = new Map<string, string>();
     const fs: RunStoreFs = {
+        append: (path, data) => {
+            store.set(path, `${store.get(path) ?? ""}${data}`);
+        },
         list: (dir) => [...store.keys()].filter((p) => p.startsWith(`${dir}/`)).map((p) => p.slice(dir.length + 1)),
         read: (path) => store.get(path) ?? null,
         remove: (path) => {
@@ -1009,6 +1012,9 @@ describe("runIssue", () => {
         const { fs } = memRunsFs();
         const order: string[] = [];
         const spyFs: RunStoreFs = {
+            append: (path, data) => {
+                fs.append(path, data);
+            },
             list: (dir) => fs.list(dir),
             read: (path) => fs.read(path),
             remove: (path) => {

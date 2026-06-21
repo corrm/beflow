@@ -536,6 +536,9 @@ describe("runCli setup", () => {
     function memFs(): RunStoreFs {
         const store = new Map<string, string>();
         return {
+            append: (path, data) => {
+                store.set(path, (store.get(path) ?? "") + data);
+            },
             list: () => [],
             read: (path) => store.get(path) ?? null,
             remove: (path) => {

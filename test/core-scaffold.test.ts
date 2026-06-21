@@ -17,6 +17,9 @@ function memFs(seed: Record<string, string> = {}): RunStoreFs & { files: Map<str
         remove(path) {
             files.delete(path);
         },
+        append(path, data) {
+            files.set(path, (files.get(path) ?? "") + data);
+        },
         write(path, data) {
             files.set(path, data);
         },

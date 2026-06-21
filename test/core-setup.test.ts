@@ -31,6 +31,9 @@ function memScaffoldFs(seed: Record<string, string> = {}): RunStoreFs & { files:
         remove: (p) => {
             files.delete(p);
         },
+        append: (p, d) => {
+            files.set(p, (files.get(p) ?? "") + d);
+        },
         write: (p, d) => {
             files.set(p, d);
         },

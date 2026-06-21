@@ -24,8 +24,13 @@ function isUrlLike(token: string): boolean {
     return /^[a-z][\w+.-]*:\/\//i.test(token);
 }
 
+function looksLikeHostname(token: string): boolean {
+    const firstSegment = token.split("/")[0] ?? "";
+    return /^[\w-]+(\.[\w-]+)*\.[a-z]{2,}$/i.test(firstSegment);
+}
+
 function looksLikePath(token: string): boolean {
-    if (token.length === 0 || isUrlLike(token)) {
+    if (token.length === 0 || isUrlLike(token) || looksLikeHostname(token)) {
         return false;
     }
     return PATH_TOKEN.test(token) || DOTFILE_PATH_TOKEN.test(token);

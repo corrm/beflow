@@ -37,6 +37,14 @@ describe("derivePreflightPaths", () => {
         expect(derivePreflightPaths("Crash on startup", "The app crashes when it boots.")).toEqual([]);
     });
 
+    it("does not extract schemeless domain-like tokens as paths", () => {
+        const body = "See example.com/index.html or www.foo.org/a/b.php for details. Fix src/core/run.ts.";
+        const paths = derivePreflightPaths("", body);
+        expect(paths).not.toContain("example.com/index.html");
+        expect(paths).not.toContain("www.foo.org/a/b.php");
+        expect(paths).toContain("src/core/run.ts");
+    });
+
     it("exposes a stable block message", () => {
         expect(PREFLIGHT_BLOCK_MESSAGE).toContain("Needs Input");
         expect(PREFLIGHT_BLOCK_MESSAGE).toContain("policy");

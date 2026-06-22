@@ -20,6 +20,7 @@ import { doctor, fixDoctor } from "./core/doctor.ts";
 import type { DoctorCheck, DoctorFixDeps } from "./core/doctor.ts";
 import { assertBoardReady, boardDrift } from "./core/drift.ts";
 import { runGc } from "./core/gc.ts";
+import type { OrphanWorktree } from "./core/gc.ts";
 import { isThinIssue, resolveMinBodyChars } from "./core/inputquality.ts";
 import { defaultIssueTemplateResolveDeps } from "./core/issuetemplate.ts";
 import { defaultMcpDeps, loadMcpServers } from "./core/mcp.ts";
@@ -363,12 +364,21 @@ function buildCli(deps: CliDeps): Cli {
             },
             "older-than": { description: "only consider worktrees older than N days", type: "string" },
             "prune": { description: "actually remove orphan worktrees (default: report only)", type: "boolean" },
+            "yes": {
+                description: "skip the confirmation prompt for --force destructive prunes",
+                type: "boolean",
+            },
         } satisfies ArgsDef as ArgsDef,
         meta: { description: "Find and prune orphaned git worktrees beflow left behind", name: "gc" },
         // gc is a local disk op: like doctor, it runs WITHOUT loadContext (no tracker/API key).
         run: async ({ args }) =>
             cmdGc(
-                { force: asBool(args.force), olderThan: asStr(args["older-than"]), prune: asBool(args.prune) },
+                {
+                    force: asBool(args.force),
+                    olderThan: asStr(args["older-than"]),
+                    prune: asBool(args.prune),
+                    yes: asBool(args.yes),
+                },
                 deps,
                 deps.cwd ?? configDir(),
                 makeLog(deps),
@@ -448,6 +458,9 @@ async function cmdRun(
     args: RunArgs & { key: string; open?: boolean; fresh?: boolean; dryRun?: boolean },
     ctx: CliContext,
 ): Promise<number> {
+    if ([args.auto, args.attend, args.open].filter((flag) => flag === true).length > 1) {
+        return ctx.fail("beflow: choose at most one run mode: --auto, --attend, or --open");
+    }
     const { deps, config, registry, tracker, prompts, log } = ctx;
     const { key } = args;
     const cli = cliOverrides(args);
@@ -649,7 +662,7 @@ async function cmdQueue(
     ctx: CliContext,
 ): Promise<number> {
     const { tracker, registry, log } = ctx;
-    const rows = await queueView(
+    const { rows, errors } = await queueView(
         { registry, tracker },
         {
             ...(args.project !== undefined ? { projects: [args.project] } : {}),
@@ -661,7 +674,10 @@ async function cmdQueue(
         ...(args.project !== undefined ? [`project ${args.project}`] : []),
     ];
     printQueue(rows, log, filterParts.join(", "));
-    return 0;
+    for (const { project, message } of errors) {
+        log(`beflow: ${project}: ${message}`);
+    }
+    return errors.length > 0 ? 1 : 0;
 }
 
 async function cmdWatch(
@@ -897,7 +913,12 @@ async function cmdDoctor(
 }
 
 async function cmdGc(
-    args: { prune?: boolean | undefined; force?: boolean | undefined; olderThan?: string | undefined },
+    args: {
+        prune?: boolean | undefined;
+        force?: boolean | undefined;
+        olderThan?: string | undefined;
+        yes?: boolean | undefined;
+    },
     deps: CliDeps,
     dir: string,
     log: (msg: string) => void,
@@ -918,6 +939,17 @@ async function cmdGc(
         olderThanDays = parsed;
     }
 
+    const askConfirm = deps.askConfirm ?? defaultAskConfirm;
+    const confirm =
+        args.force === true && args.prune === true && args.yes !== true
+            ? async (destructive: OrphanWorktree[]): Promise<boolean> =>
+                  askConfirm(
+                      `Destroy ${String(destructive.length)} worktree(s) with uncommitted/unpushed work?\n${destructive
+                          .map((o) => o.path)
+                          .join("\n")}`,
+                  )
+            : undefined;
+
     await runGc({
         force: args.force === true,
         git: deps.git,
@@ -926,6 +958,7 @@ async function cmdGc(
         runsDir,
         worktreesDir,
         ...(olderThanDays !== undefined ? { olderThanDays } : {}),
+        ...(confirm !== undefined ? { confirm } : {}),
     });
     return 0;
 }

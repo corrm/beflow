@@ -480,6 +480,23 @@ describe("runCli", () => {
         expect(seen.acpCommand).toBe("opencode");
     });
 
+    it("rejects conflicting run modes before any tracker/resolve call", async () => {
+        class TrackingTracker extends FakeTracker {
+            getIssueCalls = 0;
+            override async getIssue(): Promise<Issue> {
+                this.getIssueCalls += 1;
+                return makeIssue();
+            }
+        }
+        const tracker = new TrackingTracker();
+        const { deps, trace } = harness(tracker);
+        const code = await runCli(["run", "CG-42", "--auto", "--open"], deps);
+        expect(code).toBe(1);
+        expect(tracker.getIssueCalls).toBe(0);
+        expect(trace.runIssue).toHaveLength(0);
+        expect(trace.opened).toEqual([]);
+    });
+
     it("returns nonzero on a missing key", async () => {
         const { deps } = harness();
         const code = await runCli(["run"], deps);
@@ -685,6 +702,18 @@ describe("runCli queue", () => {
         expect(
             trace.logs.some((l) => l.includes("no items matching") && l.includes("In Review") && l.includes("CG")),
         ).toBe(true);
+    });
+
+    it("logs a per-project error and returns 1 when a project's listQueue rejects", async () => {
+        class FlakyTracker extends FakeTracker {
+            async listQueue(): Promise<Issue[]> {
+                throw new Error("tracker down");
+            }
+        }
+        const { deps, trace } = harness(new FlakyTracker());
+        const code = await runCli(["queue", "--project", "CG"], deps);
+        expect(code).toBe(1);
+        expect(trace.logs.some((l) => l.includes("beflow: CG: tracker down"))).toBe(true);
     });
 });
 
@@ -1122,5 +1151,21 @@ describe("runCli gc", () => {
         });
         expect(code).toBe(0);
         expect(trace.logs.some((l) => l.includes("orphan worktree(s)"))).toBe(true);
+    });
+
+    it("--force --prune --yes never invokes the confirmation prompt", async () => {
+        const { deps } = harness();
+        deps.loadConfig = () => ({ ...config, worktrees: { dir: join(tmpdir(), "beflow-gc-yes-test") } });
+        let asked = 0;
+        const code = await runCli(["gc", "--force", "--prune", "--yes"], {
+            ...deps,
+            askConfirm: async () => {
+                asked += 1;
+                return true;
+            },
+            git: async () => ({ code: 0, stderr: "", stdout: "" }),
+        });
+        expect(code).toBe(0);
+        expect(asked).toBe(0);
     });
 });

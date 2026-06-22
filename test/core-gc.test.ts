@@ -443,6 +443,73 @@ describe("runGc", () => {
         expect(calls.some((c) => c.args.includes("remove") || c.args.includes("branch"))).toBe(false);
     });
 
+    it("force+prune aborts and removes nothing when confirm returns false", async () => {
+        const specs = { "cg-dirty": { dirty: true, repo: "/repo/bin" } };
+        const { calls, git } = fakeGit(specs);
+        const { fs, removed } = memGcFs(["cg-dirty"]);
+        const seen: string[] = [];
+        const plan = await runGc({
+            confirm: async (destructive) => {
+                seen.push(...destructive.map((o) => o.name));
+                return false;
+            },
+            force: true,
+            fs,
+            git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([]),
+            worktreesDir: WORKTREES,
+        });
+        expect(seen).toEqual(["cg-dirty"]);
+        expect(plan.pruned.map((o) => o.name)).toEqual(["cg-dirty"]);
+        expect(removed).toEqual([]);
+        expect(calls.some((c) => c.args.includes("remove"))).toBe(false);
+    });
+
+    it("force+prune removes the destructive worktree when confirm returns true", async () => {
+        const specs = { "cg-dirty": { dirty: true, repo: "/repo/bin" } };
+        const { calls, git } = fakeGit(specs);
+        const { fs } = memGcFs(["cg-dirty"]);
+        let asked = false;
+        await runGc({
+            confirm: async () => {
+                asked = true;
+                return true;
+            },
+            force: true,
+            fs,
+            git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([]),
+            worktreesDir: WORKTREES,
+        });
+        expect(asked).toBe(true);
+        const removeCall = calls.find((c) => c.args.includes("remove"));
+        expect(removeCall?.args).toEqual(["-C", "/repo/bin", "worktree", "remove", "/wt/cg-dirty", "--force"]);
+    });
+
+    it("does not ask confirm when force+prune has no destructive worktrees", async () => {
+        const { git } = fakeGit({ "cg-safe": { repo: "/repo/bin" } });
+        const { fs } = memGcFs(["cg-safe"]);
+        let asked = false;
+        await runGc({
+            confirm: async () => {
+                asked = true;
+                return false;
+            },
+            force: true,
+            fs,
+            git,
+            prune: true,
+            runsDir: RUNS,
+            runsFs: memRunsFs([]),
+            worktreesDir: WORKTREES,
+        });
+        expect(asked).toBe(false);
+    });
+
     it("holds a too-new blocked worktree out of removal via --older-than", async () => {
         const nowMs = Date.parse("2026-06-16T00:00:00.000Z");
         const { calls, git } = fakeGit({ "cg-blk-new": { repo: "/repo/bin" }, "cg-blk-old": { repo: "/repo/bin" } });

@@ -13,6 +13,9 @@ export async function acceptIntake(projectKey: string, intakeId: string, deps: A
             /* no-op: logging disabled */
         });
     const inbox = await deps.tracker.listInbox(projectKey);
+    if (inbox.length === 0) {
+        throw new Error(`beflow: no intake items in ${projectKey}`);
+    }
     const item = inbox.find((i) => i.id === intakeId);
     if (item === undefined) {
         const available = inbox.map((i) => i.id).join(", ");

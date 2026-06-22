@@ -132,5 +132,6 @@ export interface Tracker {
     inspectBoard(project: string): Promise<BoardState>;
     ensureBoard(project: string, template: BoardTemplate, opts?: EnsureBoardOptions): Promise<EnsureBoardResult>;
     createProject(spec: ProjectCreateSpec): Promise<ProjectCreateResult>;
+    findProjectId(identifier: string): Promise<string | null>; // the tracker's project id for an existing project with this identifier, or null when none exists; no network-free guarantee, but never creates
     verifyAuth(): Promise<void>; // cheap auth probe; resolves when the token is valid, throws a clear, actionable error otherwise
 }

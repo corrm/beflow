@@ -3,12 +3,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { defineCommand, runCommand, showUsage } from "citty";
-import type { ArgsDef, CommandContext, CommandDef } from "citty";
+import type { ArgsDef, CommandDef } from "citty";
 
 import { AcpxDriver, resolveAcpCommand, resolveAcpxCommand } from "./agent/acpx.ts";
 import type { AgentDriver } from "./agent/driver.ts";
 import { loadConfig, loadRegistry } from "./config/load.ts";
 import { CONFIG_BOOTSTRAP, configDir, configPath } from "./config/paths.ts";
+import { assertKnownProject } from "./config/registry.ts";
 import type { Config, Registry } from "./config/schema.ts";
 import { ConfigStore, nodeConfigWatcher } from "./config/store.ts";
 import type { ConfigWatcher } from "./config/store.ts";
@@ -45,14 +46,16 @@ import type { OpenIssue, ResolvedRun, RunIssueDeps, RunOpenDeps, RunSupervisedDe
 import { listRecords, loadRecord, resolveRunsDir } from "./core/runstore.ts";
 import type { RunStoreFs } from "./core/runstore.ts";
 import { formatRunDetail, formatRunList } from "./core/runsview.ts";
-import { setupProject } from "./core/setup.ts";
+import { DEFAULT_AGENTOWNERS_PATH } from "./core/scaffold.ts";
+import { setupProject, updateProject } from "./core/setup.ts";
 import { beflowBoardTemplate } from "./core/template.ts";
 import { defaultPrChecks, defaultPrMerged, watch, watchTick } from "./core/watch.ts";
 import type { WatchControl, WatchDeps } from "./core/watch.ts";
 import { bunExec, expandHome, resolveWorktreeDir } from "./core/worktree.ts";
 import type { Exec } from "./core/worktree.ts";
 import type { Resolved } from "./model/types.ts";
-import { createTracker } from "./trackers/factory.ts";
+import { resolvePolicy } from "./resolve/precedence.ts";
+import { createTracker, verifyTrackerConfig } from "./trackers/factory.ts";
 import type { Tracker } from "./trackers/tracker.ts";
 
 export type WatchRunner = (projectKey: string, deps: WatchDeps, ctrl: WatchControl) => Promise<void>;
@@ -250,24 +253,28 @@ function buildCli(deps: CliDeps): Cli {
             ),
     });
 
-    // setup and update share the same args + handler (update is an alias). citty
-    // has no first-class alias, so we register both subcommands with one handler.
+    // setup and update share args but NOT behavior: setup may create or adopt a
+    // project, update only reconciles an existing config project's board (never
+    // creates). They are distinct handlers.
     const setupArgs = {
         project: { description: "Registry project key, e.g. CG", required: true, type: "positional" },
         prune: { description: "delete orphan modules / agent: labels", type: "boolean" },
     } satisfies ArgsDef as ArgsDef;
-    async function setupRun({ args }: CommandContext): Promise<number> {
-        return cmdSetup({ project: String(args.project), prune: asBool(args.prune) }, ctx());
-    }
     const setupCmd = defineCommand({
         args: setupArgs,
-        meta: { description: "Provision/reconcile a project's board to the beflow template", name: "setup" },
-        run: setupRun,
+        meta: {
+            description: "Create or adopt a project, then reconcile its board to the beflow template",
+            name: "setup",
+        },
+        run: async ({ args }) => cmdSetup({ project: String(args.project), prune: asBool(args.prune) }, ctx()),
     });
     const updateCmd = defineCommand({
         args: setupArgs,
-        meta: { description: "Alias of setup: reconcile a project's board to the template", name: "update" },
-        run: setupRun,
+        meta: {
+            description: "Push config changes (modules, states, labels) to an existing project's board",
+            name: "update",
+        },
+        run: async ({ args }) => cmdUpdate({ project: String(args.project), prune: asBool(args.prune) }, ctx()),
     });
 
     const queueCmd = defineCommand({
@@ -410,7 +417,9 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<number> {
                 : await runCommand(target.cmd, { rawArgs: target.rest });
         return typeof r.result === "number" ? r.result : 0;
     } catch (err) {
-        process.stderr.write(`beflow: ${err instanceof Error ? err.message : String(err)}\n`);
+        const msg = err instanceof Error ? err.message : String(err);
+        // Many thrown errors already carry the "beflow:" prefix; don't double it.
+        process.stderr.write(`${msg.startsWith("beflow:") ? msg : `beflow: ${msg}`}\n`);
         return 1;
     }
 }
@@ -572,7 +581,7 @@ function cmdRuns(args: { key?: string | undefined }, ctx: CliContext): number {
         const record =
             deps.runsFs !== undefined ? loadRecord(runsDir, args.key, deps.runsFs) : loadRecord(runsDir, args.key);
         if (record === null) {
-            return fail(`beflow: no run record for "${args.key}"`);
+            return fail(`beflow: no run record for "${args.key}" — run \`beflow runs\` to list known records`);
         }
         const model = config.agents[record.agent]?.model;
         for (const line of formatRunDetail(record, model)) {
@@ -587,15 +596,47 @@ function cmdRuns(args: { key?: string | undefined }, ctx: CliContext): number {
     return 0;
 }
 
+// AGENTOWNERS is only scaffolded into the repos when the user has actually selected
+// the agentowners gate for the project (global or per-project). The scaffold lands
+// at the configured agentownersPath — exactly where the evaluator reads — so the
+// gate is never pointed at a missing file. Returns undefined → beflow writes nothing.
+function scaffoldOwnersFor(ctx: CliContext, projectKey: string): { path: string } | undefined {
+    const policy = resolvePolicy(ctx.config, ctx.registry, projectKey);
+    if (policy.evaluator !== "agentowners") {
+        return undefined;
+    }
+    return { path: policy.agentownersPath ?? DEFAULT_AGENTOWNERS_PATH };
+}
+
 async function cmdSetup(args: { project: string; prune?: boolean | undefined }, ctx: CliContext): Promise<number> {
     const { deps, tracker, config, registry, dir, log } = ctx;
     const agents = [...new Set([config.agent, ...Object.keys(config.agents)])].sort();
+    const scaffoldOwners = scaffoldOwnersFor(ctx, args.project);
     await setupProject(args.project, {
         agents,
         dir,
         log,
         prune: args.prune === true,
         registry,
+        ...(scaffoldOwners !== undefined ? { scaffoldOwners } : {}),
+        ...(deps.runsFs !== undefined ? { scaffoldFs: deps.runsFs } : {}),
+        tracker,
+        trackerName: config.tracker,
+    });
+    return 0;
+}
+
+async function cmdUpdate(args: { project: string; prune?: boolean | undefined }, ctx: CliContext): Promise<number> {
+    const { deps, tracker, config, registry, dir, log } = ctx;
+    const agents = [...new Set([config.agent, ...Object.keys(config.agents)])].sort();
+    const scaffoldOwners = scaffoldOwnersFor(ctx, args.project);
+    await updateProject(args.project, {
+        agents,
+        dir,
+        log,
+        prune: args.prune === true,
+        registry,
+        ...(scaffoldOwners !== undefined ? { scaffoldOwners } : {}),
         ...(deps.runsFs !== undefined ? { scaffoldFs: deps.runsFs } : {}),
         tracker,
         trackerName: config.tracker,
@@ -615,7 +656,11 @@ async function cmdQueue(
             ...(args.state !== undefined ? { state: args.state } : {}),
         },
     );
-    printQueue(rows, log);
+    const filterParts = [
+        `state ${args.state ?? "Todo"}`,
+        ...(args.project !== undefined ? [`project ${args.project}`] : []),
+    ];
+    printQueue(rows, log, filterParts.join(", "));
     return 0;
 }
 
@@ -626,11 +671,12 @@ async function cmdWatch(
     const { deps, config, registry, tracker, prompts, log, fail } = ctx;
     const projectKey = args.project;
     const intervalSec = args.interval !== undefined ? Number(args.interval) : 30;
-    if (Number.isNaN(intervalSec) || intervalSec <= 0) {
-        return fail(`beflow: invalid --interval "${String(args.interval)}"`);
+    if (!Number.isFinite(intervalSec) || intervalSec <= 0) {
+        return fail(`beflow: invalid --interval "${String(args.interval)}" (expected a positive number of seconds)`);
     }
 
     try {
+        assertKnownProject(registry, projectKey);
         await assertBoardReady(projectKey, tracker, log);
     } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
@@ -684,10 +730,13 @@ async function cmdWatch(
     }
 
     let stopped = false;
-    function onSigint(): void {
+    function onStop(): void {
         stopped = true;
     }
-    process.once("SIGINT", onSigint);
+    // SIGTERM as well as SIGINT: a backgrounded/service watch is shut down with
+    // SIGTERM, and it should stop gracefully after the current tick like Ctrl-C does.
+    process.once("SIGINT", onStop);
+    process.once("SIGTERM", onStop);
     const runner = deps.watch ?? watch;
     try {
         await runner(projectKey, watchDeps, {
@@ -695,20 +744,23 @@ async function cmdWatch(
             sleepMs: intervalSec * 1000,
         });
     } finally {
-        process.removeListener("SIGINT", onSigint);
+        process.removeListener("SIGINT", onStop);
+        process.removeListener("SIGTERM", onStop);
         store.stop();
     }
     return 0;
 }
 
 async function cmdAccept(args: { project: string; intake: string }, ctx: CliContext): Promise<number> {
-    const { tracker, log } = ctx;
+    const { tracker, registry, log } = ctx;
+    assertKnownProject(registry, args.project);
     const item = await acceptIntake(args.project, args.intake, { log, tracker });
     log(`beflow: ${args.project} accepted ${item.id} → Backlog`);
     return 0;
 }
 
 async function cmdNew(args: { project: string; template?: string | undefined }, ctx: CliContext): Promise<number> {
+    assertKnownProject(ctx.registry, args.project);
     const templateDeps = defaultIssueTemplateResolveDeps(ctx.dir, ctx.config.prompts?.dir);
     const enrich = resolveEnrich(args.project, ctx);
     const deps: NewIssueDeps = {
@@ -824,6 +876,7 @@ async function cmdDoctor(
         loadConfig: () => deps.loadConfig(dir),
         loadRegistry: () => deps.loadRegistry(dir),
         onPath,
+        verifyTrackerConfig,
         ...(args.ping === true && deps.ping !== undefined
             ? {
                   boardChecks: async (): Promise<DoctorCheck[]> => boardChecks(deps, dir),
@@ -859,7 +912,7 @@ async function cmdGc(
     let olderThanDays: number | undefined;
     if (args.olderThan !== undefined) {
         const parsed = Number(args.olderThan);
-        if (Number.isNaN(parsed) || parsed <= 0) {
+        if (!Number.isFinite(parsed) || parsed <= 0) {
             return makeFail()(`beflow: invalid --older-than "${args.olderThan}" (expected a positive number of days)`);
         }
         olderThanDays = parsed;
@@ -940,9 +993,9 @@ function checkGlyph(level: DoctorCheck["level"]): string {
     return glyphs[level];
 }
 
-function printQueue(rows: QueueRow[], log: (msg: string) => void): void {
+function printQueue(rows: QueueRow[], log: (msg: string) => void, filter?: string): void {
     if (rows.length === 0) {
-        log("beflow: queue empty");
+        log(filter !== undefined ? `beflow: no items matching ${filter}` : "beflow: queue empty");
         return;
     }
     const cells = rows.map((r) => ({

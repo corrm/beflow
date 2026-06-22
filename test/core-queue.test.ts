@@ -101,6 +101,9 @@ class QueueTracker implements Tracker {
         throw new Error("not implemented");
     }
     async verifyAuth(): Promise<void> {}
+    async findProjectId(): Promise<string | null> {
+        return null;
+    }
 }
 
 describe("queueView", () => {
@@ -140,5 +143,13 @@ describe("queueView", () => {
         const tracker = new QueueTracker({ CG: [], LP: [] });
         const rows = await queueView({ registry, tracker }, {});
         expect(rows).toEqual([]);
+    });
+
+    it("rejects an unknown project before any tracker call", async () => {
+        const tracker = new QueueTracker({ CG: [], LP: [] });
+        expect(queueView({ registry, tracker }, { projects: ["ZZ"] })).rejects.toThrow(
+            /unknown project "ZZ" \(known: .*\)/,
+        );
+        expect(tracker.filters).toHaveLength(0);
     });
 });

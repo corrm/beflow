@@ -104,6 +104,9 @@ class FakeTracker implements Tracker {
         throw new Error("not implemented");
     }
     async verifyAuth(): Promise<void> {}
+    async findProjectId(): Promise<string | null> {
+        return null;
+    }
 }
 
 function asTracker(t: FakeTracker): Tracker {

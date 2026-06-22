@@ -3,7 +3,7 @@ import { describe, expect, it, mock } from "bun:test";
 import type { Project, Registry } from "../src/config/schema.ts";
 import type { RunStoreFs } from "../src/core/runstore.ts";
 import type { AskProjectSpec } from "../src/core/setup.ts";
-import { requiredText, setupProject } from "../src/core/setup.ts";
+import { requiredText, setupProject, updateProject } from "../src/core/setup.ts";
 import type { Issue, IssueMeta } from "../src/model/types.ts";
 import type {
     BlockerRef,
@@ -125,6 +125,12 @@ class RecordingTracker implements Tracker {
     async createProject(spec: ProjectCreateSpec): Promise<ProjectCreateResult> {
         this.createProjectCalls.push(spec);
         return { trackerProjectId: "new-proj-id" };
+    }
+    foundProjectId: string | null = null;
+    findProjectIdCalls: string[] = [];
+    async findProjectId(identifier: string): Promise<string | null> {
+        this.findProjectIdCalls.push(identifier);
+        return this.foundProjectId;
     }
 }
 
@@ -284,6 +290,52 @@ describe("setupProject", () => {
         expect(result.created).toEqual(["state:In Review"]);
     });
 
+    it("adopts an existing tracker project when the asker links, skipping createProject", async () => {
+        const tracker = new RecordingTracker({
+            created: [],
+            orphans: [],
+            pruned: [],
+            skipped: [],
+            updated: [],
+            warnings: [],
+        });
+        const localRegistry: Registry = {
+            projects: {},
+            workspace: { id: "w", slug: "your-workspace" },
+        };
+        const cannedEntry: Project = {
+            default_repo: "main",
+            module_repo_map: {},
+            name: "NewProj",
+            repos: { main: "/repo/main" },
+            root: "/root/new",
+        };
+        const askProjectSpec: AskProjectSpec = async () => ({
+            entry: { ...cannedEntry },
+            linkedProjectId: "linked-id",
+            spec: { identifier: "NP", name: "NewProj" },
+        });
+        const persistCalls: { key: string; project: Project }[] = [];
+
+        await setupProject("NP", {
+            agents: ["claude"],
+            askProjectSpec,
+            dir: "/cfg",
+            persist: (_dir, key, project) => {
+                persistCalls.push({ key, project });
+            },
+            registry: localRegistry,
+            scaffoldFs: memScaffoldFs(),
+            tracker,
+            trackerName: "plane",
+        });
+
+        expect(tracker.createProjectCalls).toHaveLength(0);
+        expect(persistCalls[0]!.project.plane_project_id).toBe("linked-id");
+        expect(localRegistry.projects.NP?.plane_project_id).toBe("linked-id");
+        expect(tracker.ensureBoardCalls).toHaveLength(1);
+    });
+
     it("throws an actionable error for a missing key with no asker on a non-TTY", async () => {
         const tracker = new RecordingTracker({
             created: [],
@@ -391,7 +443,7 @@ describe("setupProject", () => {
         expect(tracker.ensureBoardCalls[0]!.project).toBe("CG");
     });
 
-    it("scaffolds the control-plane AGENTOWNERS into each repo and instructs activation", async () => {
+    it("does NOT scaffold AGENTOWNERS unless the agentowners gate is opted in", async () => {
         const tracker = new RecordingTracker({
             created: [],
             orphans: [],
@@ -413,12 +465,38 @@ describe("setupProject", () => {
             trackerName: "plane",
         });
 
-        expect(scaffoldFs.files.get("/repo/bin/.github/AGENTOWNERS")).toContain("tests/** require_approval");
-        expect(lines.some((l) => l.includes("wrote recommended control-plane AGENTOWNERS"))).toBe(true);
-        expect(lines.some((l) => l.includes('policy.evaluator = "agentowners"'))).toBe(true);
+        expect(scaffoldFs.files.get("/repo/bin/.github/AGENTOWNERS")).toBeUndefined();
+        expect(lines.some((l) => l.includes("AGENTOWNERS"))).toBe(false);
     });
 
-    it("leaves an existing AGENTOWNERS untouched and skips the activation hint", async () => {
+    it("scaffolds the control-plane AGENTOWNERS into each repo when opted in", async () => {
+        const tracker = new RecordingTracker({
+            created: [],
+            orphans: [],
+            pruned: [],
+            skipped: [],
+            updated: [],
+            warnings: [],
+        });
+        const scaffoldFs = memScaffoldFs();
+        const lines: string[] = [];
+        await setupProject("CG", {
+            agents: ["claude"],
+            log: (m) => {
+                lines.push(m);
+            },
+            registry,
+            scaffoldFs,
+            scaffoldOwners: { path: ".github/AGENTOWNERS" },
+            tracker,
+            trackerName: "plane",
+        });
+
+        expect(scaffoldFs.files.get("/repo/bin/.github/AGENTOWNERS")).toContain("AGENTOWNERS");
+        expect(lines.some((l) => l.includes("wrote starter AGENTOWNERS"))).toBe(true);
+    });
+
+    it("leaves an existing AGENTOWNERS untouched when opted in", async () => {
         const tracker = new RecordingTracker({
             created: [],
             orphans: [],
@@ -436,13 +514,13 @@ describe("setupProject", () => {
             },
             registry,
             scaffoldFs,
+            scaffoldOwners: { path: ".github/AGENTOWNERS" },
             tracker,
             trackerName: "plane",
         });
 
         expect(scaffoldFs.files.get("/repo/bin/.github/AGENTOWNERS")).toBe("src/** block\n");
         expect(lines.some((l) => l.includes("already present") && l.includes("left untouched"))).toBe(true);
-        expect(lines.some((l) => l.includes('policy.evaluator = "agentowners"'))).toBe(false);
     });
 
     it("forwards an injected resolveModuleChanges into ensureBoard opts", async () => {
@@ -468,6 +546,127 @@ describe("setupProject", () => {
     });
 });
 
+describe("updateProject", () => {
+    function emptyResult(): EnsureBoardResult {
+        return { created: [], orphans: [], pruned: [], skipped: [], updated: [], warnings: [] };
+    }
+
+    it("reconciles an existing linked project without creating or persisting", async () => {
+        const tracker = new RecordingTracker(emptyResult());
+        const persistCalls: unknown[] = [];
+
+        const result = await updateProject("CG", {
+            agents: ["claude"],
+            persist: () => {
+                persistCalls.push(true);
+            },
+            registry,
+            scaffoldFs: memScaffoldFs(),
+            tracker,
+            trackerName: "plane",
+        });
+
+        expect(tracker.createProjectCalls).toHaveLength(0);
+        expect(persistCalls).toHaveLength(0);
+        expect(tracker.findProjectIdCalls).toHaveLength(0);
+        expect(tracker.ensureBoardCalls).toHaveLength(1);
+        expect(tracker.ensureBoardCalls[0]!.project).toBe("CG");
+        expect(result.created).toEqual([]);
+    });
+
+    it("never creates: throws when the key is not in config", async () => {
+        const tracker = new RecordingTracker(emptyResult());
+        expect(
+            updateProject("ZZ", {
+                agents: ["claude"],
+                registry,
+                tracker,
+                trackerName: "plane",
+            }),
+        ).rejects.toThrow(/project "ZZ" is not in .*config\.json — run `beflow setup ZZ`/);
+        expect(tracker.createProjectCalls).toHaveLength(0);
+        expect(tracker.ensureBoardCalls).toHaveLength(0);
+    });
+
+    it("resolves and persists the tracker link when plane_project_id is missing", async () => {
+        const tracker = new RecordingTracker(emptyResult());
+        tracker.foundProjectId = "resolved-id";
+        const localRegistry: Registry = {
+            projects: {
+                NP: {
+                    default_repo: "main",
+                    module_repo_map: {},
+                    name: "NoLink",
+                    repos: { main: "/repo/main" },
+                    root: "/root",
+                },
+            },
+            workspace: { id: "w", slug: "your-workspace" },
+        };
+        const persistCalls: { key: string; project: Project }[] = [];
+
+        await updateProject("NP", {
+            agents: ["claude"],
+            dir: "/cfg",
+            persist: (_dir, key, project) => {
+                persistCalls.push({ key, project });
+            },
+            registry: localRegistry,
+            scaffoldFs: memScaffoldFs(),
+            tracker,
+            trackerName: "plane",
+        });
+
+        expect(tracker.findProjectIdCalls).toEqual(["NP"]);
+        expect(persistCalls[0]!.project.plane_project_id).toBe("resolved-id");
+        expect(localRegistry.projects.NP?.plane_project_id).toBe("resolved-id");
+        expect(tracker.ensureBoardCalls).toHaveLength(1);
+    });
+
+    it("throws when no tracker project matches an unlinked config entry", async () => {
+        const tracker = new RecordingTracker(emptyResult());
+        tracker.foundProjectId = null;
+        const localRegistry: Registry = {
+            projects: {
+                NP: {
+                    default_repo: "main",
+                    module_repo_map: {},
+                    name: "NoLink",
+                    repos: { main: "/repo/main" },
+                    root: "/root",
+                },
+            },
+            workspace: { id: "w", slug: "your-workspace" },
+        };
+
+        expect(
+            updateProject("NP", {
+                agents: ["claude"],
+                registry: localRegistry,
+                scaffoldFs: memScaffoldFs(),
+                tracker,
+                trackerName: "plane",
+            }),
+        ).rejects.toThrow(/no plane_project_id and no plane project with identifier "NP"/);
+        expect(tracker.createProjectCalls).toHaveLength(0);
+        expect(tracker.ensureBoardCalls).toHaveLength(0);
+    });
+
+    it("fails fast when verifyAuth rejects", async () => {
+        const tracker = new RecordingTracker(emptyResult());
+        tracker.verifyAuthError = new Error("beflow: Plane token invalid");
+        expect(
+            updateProject("CG", {
+                agents: ["claude"],
+                registry,
+                tracker,
+                trackerName: "plane",
+            }),
+        ).rejects.toThrow(/Plane token invalid/);
+        expect(tracker.ensureBoardCalls).toHaveLength(0);
+    });
+});
+
 describe("requiredText", () => {
     it("rejects an empty value when there is no default", () => {
         expect(requiredText("", false)).toBe("Required");
@@ -488,12 +687,12 @@ describe("requiredText", () => {
 });
 
 describe("defaultAskProjectSpec single-repo Enter-through flow", () => {
-    it("sources the default repo key from the identifier and its path from the root", async () => {
+    it('defaults the repo key to "main" and its path to the root; skips module prompts with one repo', async () => {
         // Mirror @clack/prompts 1.5.1: text() runs validate on the raw value, then on a
         // bare Enter (empty input) substitutes defaultValue. Scripted inputs drive each prompt.
         const inputs = ["My App", "", "/root/new", "", ""];
         let cursor = 0;
-        const confirmAnswers = [false, false];
+        const confirmAnswers = [false];
         let confirmCursor = 0;
 
         await mock.module("@clack/prompts", () => ({
@@ -521,14 +720,107 @@ describe("defaultAskProjectSpec single-repo Enter-through flow", () => {
 
         try {
             const { defaultAskProjectSpec } = await import("../src/core/setup.ts");
-            const { entry, spec } = await defaultAskProjectSpec({ key: "NP", tracker: "plane" });
+            const { entry, spec, linkedProjectId } = await defaultAskProjectSpec({
+                findProjectId: async () => null,
+                key: "NP",
+                tracker: "plane",
+            });
 
             expect(spec).toEqual({ identifier: "NP", name: "My App" });
             expect(entry.name).toBe("My App");
             expect(entry.root).toBe("/root/new");
-            expect(entry.default_repo).toBe("NP");
-            expect(entry.repos).toEqual({ NP: "/root/new" });
+            expect(entry.default_repo).toBe("main");
+            expect(entry.repos).toEqual({ main: "/root/new" });
             expect(entry.module_repo_map).toEqual({});
+            expect(linkedProjectId).toBeUndefined();
+        } finally {
+            mock.restore();
+        }
+    });
+
+    it("offers to link when the identifier already exists in the tracker, and skips create", async () => {
+        const inputs = ["My App", "", "/root/new", "", ""];
+        let cursor = 0;
+        // confirm sequence: link? -> yes ; "Add another repo?" -> no
+        const confirmAnswers = [true, false];
+        let confirmCursor = 0;
+
+        await mock.module("@clack/prompts", () => ({
+            cancel: () => {},
+            confirm: async () => confirmAnswers[confirmCursor++] ?? false,
+            isCancel: () => false,
+            select: async () => {
+                throw new Error("select must not be called");
+            },
+            text: async (opts: {
+                defaultValue?: string;
+                validate?: (v: string | undefined) => string | undefined;
+            }): Promise<string> => {
+                const typed = inputs[cursor++] ?? "";
+                if (typed === "" && opts.defaultValue !== undefined) {
+                    return opts.defaultValue;
+                }
+                return typed;
+            },
+        }));
+
+        try {
+            const { defaultAskProjectSpec } = await import("../src/core/setup.ts");
+            const findCalls: string[] = [];
+            const { spec, linkedProjectId } = await defaultAskProjectSpec({
+                findProjectId: async (id) => {
+                    findCalls.push(id);
+                    return "existing-proj-id";
+                },
+                key: "NP",
+                tracker: "plane",
+            });
+
+            expect(findCalls).toEqual(["NP"]);
+            expect(spec.identifier).toBe("NP");
+            expect(linkedProjectId).toBe("existing-proj-id");
+        } finally {
+            mock.restore();
+        }
+    });
+
+    it("re-prompts for a new identifier when the user declines to link", async () => {
+        // identifier #1 ("") -> "NP" (taken, decline) ; identifier #2 -> "NP2" (free)
+        const inputs = ["My App", "", "NP2", "/root/new", "", ""];
+        let cursor = 0;
+        // confirm: link "NP"? -> no ; "Add another repo?" -> no
+        const confirmAnswers = [false, false];
+        let confirmCursor = 0;
+
+        await mock.module("@clack/prompts", () => ({
+            cancel: () => {},
+            confirm: async () => confirmAnswers[confirmCursor++] ?? false,
+            isCancel: () => false,
+            select: async () => {
+                throw new Error("select must not be called");
+            },
+            text: async (opts: {
+                defaultValue?: string;
+                validate?: (v: string | undefined) => string | undefined;
+            }): Promise<string> => {
+                const typed = inputs[cursor++] ?? "";
+                if (typed === "" && opts.defaultValue !== undefined) {
+                    return opts.defaultValue;
+                }
+                return typed;
+            },
+        }));
+
+        try {
+            const { defaultAskProjectSpec } = await import("../src/core/setup.ts");
+            const { spec, linkedProjectId } = await defaultAskProjectSpec({
+                findProjectId: async (id) => (id === "NP" ? "taken-id" : null),
+                key: "NP",
+                tracker: "plane",
+            });
+
+            expect(spec.identifier).toBe("NP2");
+            expect(linkedProjectId).toBeUndefined();
         } finally {
             mock.restore();
         }

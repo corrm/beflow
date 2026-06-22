@@ -112,7 +112,9 @@ class FakeTracker implements Tracker {
         this.movedToInProgress = issue.state.group === "started";
     }
 
+    getIssueCalls = 0;
     async getIssue(): Promise<Issue> {
+        this.getIssueCalls += 1;
         if (this.movedToInProgress) {
             return { ...this.issue, state: { group: "started", name: "In Progress" } };
         }
@@ -181,6 +183,9 @@ class FakeTracker implements Tracker {
         throw new Error("not implemented");
     }
     async verifyAuth(): Promise<void> {}
+    async findProjectId(): Promise<string | null> {
+        return null;
+    }
 }
 
 interface EnsureCall {
@@ -359,9 +364,12 @@ function capturingSink(): { sink: DecisionSink; events: DecisionEvent[] } {
 }
 
 describe("resolveRun", () => {
-    it("throws on an unknown project key", async () => {
+    it("throws on an unknown project key before any tracker call", async () => {
         const tracker = new FakeTracker(makeIssue({ key: "ZZ-1" }));
-        expect(resolveRun("ZZ-1", {}, config, registry, tracker)).rejects.toThrow(/unknown project key "ZZ"/);
+        expect(resolveRun("ZZ-1", {}, config, registry, tracker)).rejects.toThrow(
+            /unknown project "ZZ" \(known: .*\) — run `beflow setup ZZ`/,
+        );
+        expect(tracker.getIssueCalls).toBe(0);
     });
 
     it("resolves issue, project, and resolved fields", async () => {

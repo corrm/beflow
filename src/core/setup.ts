@@ -1,7 +1,7 @@
 import { cancel, confirm, isCancel, select, text } from "@clack/prompts";
 
 import { configDir, configPath } from "../config/paths.ts";
-import { addProject } from "../config/persist.ts";
+import { addProject, upsertProject } from "../config/persist.ts";
 import type { Project, Registry } from "../config/schema.ts";
 import type {
     EnsureBoardResult,
@@ -19,12 +19,17 @@ import { beflowBoardTemplate } from "./template.ts";
 import { expandHome } from "./worktree.ts";
 
 // The interactive create boundary: given the missing key + active tracker, gather
-// a project-create spec plus the config entry to write back. Injected so the
-// orchestration core stays unit-testable without a TTY.
+// a project-create spec plus the config entry to write back. `findProjectId` lets
+// the asker detect — right after the identifier question — that the tracker already
+// has a project with that identifier, so it can offer to link instead of wasting
+// the rest of the questionnaire on a create that would 409. When the asker links,
+// it returns the resolved tracker project id in `linkedProjectId` and the
+// orchestrator skips createProject. Injected so the core stays unit-testable.
 export type AskProjectSpec = (ctx: {
     key: string;
     tracker: string;
-}) => Promise<{ spec: ProjectCreateSpec; entry: Project }>;
+    findProjectId: (identifier: string) => Promise<string | null>;
+}) => Promise<{ spec: ProjectCreateSpec; entry: Project; linkedProjectId?: string }>;
 
 export interface SetupDeps {
     tracker: Tracker;
@@ -38,6 +43,11 @@ export interface SetupDeps {
     persist?: (dir: string, key: string, project: Project) => void;
     dir?: string;
     scaffoldFs?: RunStoreFs;
+    // Opt-in: present ONLY when the agentowners gate is selected
+    // (policy.evaluator = "agentowners"). `path` is the configured agentownersPath —
+    // the exact location the evaluator reads — so the starter file lands where the
+    // gate looks. Absent → beflow never drops files into the repo.
+    scaffoldOwners?: { path: string };
 }
 
 async function defaultResolveModuleChanges(change: ModuleChange): Promise<Record<string, ModuleChangeAction>> {
@@ -117,19 +127,38 @@ async function askYes(message: string): Promise<boolean> {
     return value;
 }
 
-// The clack-backed default asker: prompts for the project name + identifier, the
-// repo map (default repo + extras), and optional module→repo entries, then
-// returns the create spec plus the config entry (the orchestrator fills
-// plane_project_id after the tracker create).
+// The clack-backed default asker: prompts for the project name + identifier, checks
+// the tracker for an identifier collision before going further, then gathers the
+// repo map (default repo + extras) and — only when more than one repo exists —
+// optional module→repo entries. Returns the create spec plus the config entry (the
+// orchestrator fills plane_project_id after create or from the link).
 export async function defaultAskProjectSpec(ctx: {
     key: string;
     tracker: string;
-}): Promise<{ spec: ProjectCreateSpec; entry: Project }> {
+    findProjectId: (identifier: string) => Promise<string | null>;
+}): Promise<{ spec: ProjectCreateSpec; entry: Project; linkedProjectId?: string }> {
     const name = await askText("Project name");
-    const identifier = await askText("Project identifier", { defaultValue: ctx.key });
+
+    let identifier = await askText("Project identifier", { defaultValue: ctx.key });
+    let linkedProjectId: string | undefined;
+    for (;;) {
+        const existing = await ctx.findProjectId(identifier);
+        if (existing === null) {
+            break;
+        }
+        const link = await askYes(
+            `A project with identifier "${identifier}" already exists in ${ctx.tracker}. Link beflow to it? (No = pick a different identifier)`,
+        );
+        if (link) {
+            linkedProjectId = existing;
+            break;
+        }
+        identifier = await askText("Project identifier", { defaultValue: ctx.key });
+    }
+
     const root = await askText("Project root (absolute path)");
 
-    const defaultRepoKey = await askText("Default repo key", { defaultValue: identifier });
+    const defaultRepoKey = await askText("Default repo key", { defaultValue: "main" });
     const repos: Record<string, string> = {
         [defaultRepoKey]: await askText(`Absolute path for repo "${defaultRepoKey}"`, { defaultValue: root }),
     };
@@ -140,22 +169,26 @@ export async function defaultAskProjectSpec(ctx: {
 
     const repoKeys = Object.keys(repos);
     const moduleRepoMap: Record<string, string> = {};
-    while (await askYes("Add a module → repo mapping?")) {
-        const moduleName = await askText("Module name");
-        const repoKey = await text({
-            message: `Repo key for module "${moduleName}"`,
-            validate: (v: string | undefined): string | undefined => {
-                const trimmed = (v ?? "").trim();
-                if (trimmed === "") {
-                    return "Required";
-                }
-                return repoKeys.includes(trimmed) ? undefined : `Unknown repo key — one of: ${repoKeys.join(", ")}`;
-            },
-        });
-        if (isCancel(repoKey)) {
-            cancelledCreate();
+    // A module→repo mapping only disambiguates between repos; with a single repo
+    // every module maps to it implicitly, so don't ask.
+    if (repoKeys.length > 1) {
+        while (await askYes("Add a module → repo mapping?")) {
+            const moduleName = await askText("Module name");
+            const repoKey = await text({
+                message: `Repo key for module "${moduleName}"`,
+                validate: (v: string | undefined): string | undefined => {
+                    const trimmed = (v ?? "").trim();
+                    if (trimmed === "") {
+                        return "Required";
+                    }
+                    return repoKeys.includes(trimmed) ? undefined : `Unknown repo key — one of: ${repoKeys.join(", ")}`;
+                },
+            });
+            if (isCancel(repoKey)) {
+                cancelledCreate();
+            }
+            moduleRepoMap[moduleName] = repoKey.trim();
         }
-        moduleRepoMap[moduleName] = repoKey.trim();
     }
 
     return {
@@ -167,35 +200,18 @@ export async function defaultAskProjectSpec(ctx: {
             root,
         },
         spec: { identifier, name },
+        ...(linkedProjectId !== undefined ? { linkedProjectId } : {}),
     };
 }
 
-export async function setupProject(projectKey: string, deps: SetupDeps): Promise<EnsureBoardResult> {
-    const log =
-        deps.log ??
-        ((): void => {
-            /* no-op: logging disabled */
-        });
-    await deps.tracker.verifyAuth();
-    if (deps.registry.projects[projectKey] === undefined) {
-        const ask = deps.askProjectSpec ?? (process.stdin.isTTY ? defaultAskProjectSpec : undefined);
-        if (ask === undefined) {
-            throw new Error(
-                `beflow: project "${projectKey}" is not in ${configPath()}; run setup in an interactive terminal to create it`,
-            );
-        }
-        const { entry, spec } = await ask({ key: projectKey, tracker: deps.trackerName });
-        const { trackerProjectId } = await deps.tracker.createProject(spec);
-        if (deps.trackerName === "plane" && trackerProjectId !== undefined) {
-            entry.plane_project_id = trackerProjectId;
-        }
-        (deps.persist ?? addProject)(deps.dir ?? configDir(), projectKey, entry);
-        // The tracker holds a reference to this same registry object; mutate it in
-        // place so ensureBoard below sees the freshly created project.
-        deps.registry.projects[projectKey] = entry;
-        log(`beflow: created project ${projectKey} (${spec.identifier}) in ${deps.trackerName}`);
-    }
+function noopLog(): void {
+    /* logging disabled */
+}
 
+// Reconcile the project's board to the beflow template: states, labels, modules,
+// types. Shared by setup (after create/link) and update. Also scaffolds the
+// recommended control-plane AGENTOWNERS into each mapped repo.
+async function reconcileBoard(projectKey: string, deps: SetupDeps, log: Logger): Promise<EnsureBoardResult> {
     const template = beflowBoardTemplate(deps.registry, projectKey, deps.agents);
     const resolveModuleChanges =
         deps.resolveModuleChanges ?? (process.stdin.isTTY ? defaultResolveModuleChanges : undefined);
@@ -205,7 +221,7 @@ export async function setupProject(projectKey: string, deps: SetupDeps): Promise
     });
 
     log(
-        `beflow: setup ${projectKey} — ${String(result.created.length)} created, ${String(result.updated.length)} updated, ${String(result.skipped.length)} skipped, ${String(result.pruned.length)} pruned`,
+        `beflow: ${projectKey} — ${String(result.created.length)} created, ${String(result.updated.length)} updated, ${String(result.skipped.length)} skipped, ${String(result.pruned.length)} pruned`,
     );
     for (const warning of result.warnings) {
         log(`beflow: warning: ${warning}`);
@@ -214,34 +230,108 @@ export async function setupProject(projectKey: string, deps: SetupDeps): Promise
     if (deps.prune !== true && result.orphans.length > 0) {
         for (const orphan of result.orphans) {
             log(
-                `beflow: orphan ${orphan} exists in Plane but not in config; run 'beflow update ${projectKey} --prune' to remove it`,
+                `beflow: orphan ${orphan} exists in ${deps.trackerName} but not in config; run 'beflow update ${projectKey} --prune' to remove it`,
             );
         }
     }
 
-    scaffoldControlPlane(deps.registry.projects[projectKey], deps.scaffoldFs ?? nodeRunStoreFs, log);
+    if (deps.scaffoldOwners !== undefined) {
+        scaffoldControlPlane(
+            deps.registry.projects[projectKey],
+            deps.scaffoldOwners.path,
+            deps.scaffoldFs ?? nodeRunStoreFs,
+            log,
+        );
+    }
 
     return result;
 }
 
-// Drop the recommended control-plane AGENTOWNERS into every repo the project maps,
-// skipping any repo that already has one. Activating the file is a separate, explicit
-// Step (policy.evaluator = "agentowners"); setup only scaffolds, never mutates config.
-function scaffoldControlPlane(project: Project | undefined, fs: RunStoreFs, log: Logger): void {
+export async function setupProject(projectKey: string, deps: SetupDeps): Promise<EnsureBoardResult> {
+    const log = deps.log ?? noopLog;
+    await deps.tracker.verifyAuth();
+
+    if (deps.registry.projects[projectKey] === undefined) {
+        const ask = deps.askProjectSpec ?? (process.stdin.isTTY ? defaultAskProjectSpec : undefined);
+        if (ask === undefined) {
+            throw new Error(
+                `beflow: project "${projectKey}" is not in ${configPath()}; run setup in an interactive terminal to create it`,
+            );
+        }
+        const { entry, spec, linkedProjectId } = await ask({
+            findProjectId: async (identifier) => deps.tracker.findProjectId(identifier),
+            key: projectKey,
+            tracker: deps.trackerName,
+        });
+
+        let trackerProjectId = linkedProjectId;
+        if (trackerProjectId === undefined) {
+            ({ trackerProjectId } = await deps.tracker.createProject(spec));
+            log(`beflow: created project ${projectKey} (${spec.identifier}) in ${deps.trackerName}`);
+        } else {
+            log(
+                `beflow: linked project ${projectKey} (${spec.identifier}) to the existing ${deps.trackerName} project`,
+            );
+        }
+
+        if (deps.trackerName === "plane" && trackerProjectId !== undefined) {
+            entry.plane_project_id = trackerProjectId;
+        }
+        (deps.persist ?? addProject)(deps.dir ?? configDir(), projectKey, entry);
+        // The tracker holds a reference to this same registry object; mutate it in
+        // place so reconcileBoard below sees the freshly created project.
+        deps.registry.projects[projectKey] = entry;
+    }
+
+    return reconcileBoard(projectKey, deps, log);
+}
+
+// update never creates: it reconciles an existing config project's board to the
+// template. When the entry has no tracker link yet (a hand-added config entry),
+// resolve it by identifier and persist the link, but fail clearly rather than
+// create anything.
+export async function updateProject(projectKey: string, deps: SetupDeps): Promise<EnsureBoardResult> {
+    const log = deps.log ?? noopLog;
+
+    // Config membership needs no network, so reject an unknown key instantly
+    // before authenticating.
+    const entry = deps.registry.projects[projectKey];
+    if (entry === undefined) {
+        throw new Error(
+            `beflow: project "${projectKey}" is not in ${configPath()} — run \`beflow setup ${projectKey}\` to create or adopt it`,
+        );
+    }
+
+    await deps.tracker.verifyAuth();
+
+    if (deps.trackerName === "plane" && entry.plane_project_id === undefined) {
+        const found = await deps.tracker.findProjectId(projectKey);
+        if (found === null) {
+            throw new Error(
+                `beflow: project "${projectKey}" has no plane_project_id and no ${deps.trackerName} project with identifier "${projectKey}" exists — run \`beflow setup ${projectKey}\``,
+            );
+        }
+        entry.plane_project_id = found;
+        (deps.persist ?? upsertProject)(deps.dir ?? configDir(), projectKey, entry);
+        log(`beflow: linked project ${projectKey} to the existing ${deps.trackerName} project`);
+    }
+
+    return reconcileBoard(projectKey, deps, log);
+}
+
+// Drop the starter AGENTOWNERS into every repo the project maps, skipping any repo
+// that already has one. Only reached when the agentowners gate is selected
+// (policy.evaluator = "agentowners"), so the gate has the file it reads.
+function scaffoldControlPlane(project: Project | undefined, ownersPath: string, fs: RunStoreFs, log: Logger): void {
     if (project === undefined) {
         return;
     }
-    let wroteAny = false;
     for (const repoPath of new Set(Object.values(project.repos))) {
-        const { path, written } = scaffoldAgentowners(expandHome(repoPath), fs);
+        const { path, written } = scaffoldAgentowners(expandHome(repoPath), ownersPath, fs);
         if (written) {
-            log(`beflow: wrote recommended control-plane AGENTOWNERS to ${path}`);
-            wroteAny = true;
+            log(`beflow: agentowners gate is on — wrote starter AGENTOWNERS to ${path}`);
         } else {
             log(`beflow: AGENTOWNERS already present at ${path} — left untouched`);
         }
-    }
-    if (wroteAny) {
-        log('beflow: to activate the gate, set policy.evaluator = "agentowners" in your beflow config');
     }
 }

@@ -131,6 +131,9 @@ class FakeTracker implements Tracker {
         throw new Error("not implemented");
     }
     async verifyAuth(): Promise<void> {}
+    async findProjectId(): Promise<string | null> {
+        return null;
+    }
 }
 
 class UnknownKeyTracker extends FakeTracker {
@@ -569,6 +572,64 @@ describe("runCli setup", () => {
         expect(code).toBe(1);
     });
 
+    function recordingFs(): { fs: RunStoreFs; writes: string[] } {
+        const store = new Map<string, string>();
+        const writes: string[] = [];
+        return {
+            writes,
+            fs: {
+                append: (path, data) => {
+                    store.set(path, (store.get(path) ?? "") + data);
+                },
+                list: () => [],
+                read: (path) => store.get(path) ?? null,
+                remove: (path) => {
+                    store.delete(path);
+                },
+                write: (path, data) => {
+                    writes.push(path);
+                    store.set(path, data);
+                },
+            },
+        };
+    }
+
+    it("does NOT scaffold AGENTOWNERS into the repo by default", async () => {
+        const tracker = new SetupTracker();
+        const { deps } = harness(tracker);
+        const { fs, writes } = recordingFs();
+        deps.runsFs = fs;
+        const code = await runCli(["setup", "CG"], deps);
+        expect(code).toBe(0);
+        expect(writes.some((p) => p.includes("AGENTOWNERS"))).toBe(false);
+    });
+
+    it("scaffolds AGENTOWNERS only when policy.evaluator is agentowners", async () => {
+        const tracker = new SetupTracker();
+        const { deps } = harness(tracker);
+        deps.loadConfig = () => ({ ...config, policy: { evaluator: "agentowners" } });
+        const { fs, writes } = recordingFs();
+        deps.runsFs = fs;
+        const code = await runCli(["setup", "CG"], deps);
+        expect(code).toBe(0);
+        expect(writes.some((p) => p.includes("/repo/bin/.github/AGENTOWNERS"))).toBe(true);
+    });
+
+    it("scaffolds at the configured agentownersPath (the location the evaluator reads)", async () => {
+        const tracker = new SetupTracker();
+        const { deps } = harness(tracker);
+        deps.loadConfig = () => ({
+            ...config,
+            policy: { agentownersPath: "policy/OWNERS", evaluator: "agentowners" },
+        });
+        const { fs, writes } = recordingFs();
+        deps.runsFs = fs;
+        const code = await runCli(["setup", "CG"], deps);
+        expect(code).toBe(0);
+        expect(writes).toContain("/repo/bin/policy/OWNERS");
+        expect(writes.some((p) => p.includes(".github/AGENTOWNERS"))).toBe(false);
+    });
+
     it("passes a de-duped, sorted agent:<name> label set into the template", async () => {
         const tracker = new SetupTracker();
         const { deps } = harness(tracker);
@@ -606,6 +667,24 @@ describe("runCli queue", () => {
         const code = await runCli(["queue", "--project", "CG", "--state", "In Review"], deps);
         expect(code).toBe(0);
         expect(tracker.filters.every((f) => f.state === "In Review")).toBe(true);
+    });
+
+    it("rejects an unknown --project before any tracker call", async () => {
+        const tracker = new QueueTracker();
+        const { deps } = harness(tracker);
+        const code = await runCli(["queue", "--project", "ZZ"], deps);
+        expect(code).toBe(1);
+        expect(tracker.filters).toHaveLength(0);
+    });
+
+    it("names the active filter when the queue is empty", async () => {
+        const tracker = new FakeTracker(); // listQueue returns []
+        const { deps, trace } = harness(tracker);
+        const code = await runCli(["queue", "--project", "CG", "--state", "In Review"], deps);
+        expect(code).toBe(0);
+        expect(
+            trace.logs.some((l) => l.includes("no items matching") && l.includes("In Review") && l.includes("CG")),
+        ).toBe(true);
     });
 });
 
@@ -672,11 +751,22 @@ describe("runCli runs", () => {
         expect(trace.logs.some((l) => l === "model: sonnet")).toBe(true);
     });
 
-    it("fails when the key has no record", async () => {
+    it("fails with an actionable hint when the key has no record", async () => {
         const { deps } = harness();
         deps.runsFs = runsFs({});
-        const code = await runCli(["runs", "CG-99"], deps);
-        expect(code).toBe(1);
+        const errs: string[] = [];
+        const original = process.stderr.write.bind(process.stderr);
+        process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+            errs.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+            return true;
+        }) as typeof process.stderr.write;
+        try {
+            const code = await runCli(["runs", "CG-99"], deps);
+            expect(code).toBe(1);
+        } finally {
+            process.stderr.write = original;
+        }
+        expect(errs.join("")).toContain("beflow runs");
     });
 
     it("reports an empty store", async () => {
@@ -702,6 +792,27 @@ describe("runCli accept", () => {
         const { deps } = harness(tracker);
         const code = await runCli(["accept", "CG", "nope"], deps);
         expect(code).toBe(1);
+    });
+
+    it("rejects an unknown project with a clear, singly-prefixed error", async () => {
+        const tracker = new AcceptTracker();
+        const { deps } = harness(tracker);
+        const errs: string[] = [];
+        const original = process.stderr.write.bind(process.stderr);
+        process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+            errs.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+            return true;
+        }) as typeof process.stderr.write;
+        try {
+            const code = await runCli(["accept", "ZZ", "intake-1"], deps);
+            expect(code).toBe(1);
+        } finally {
+            process.stderr.write = original;
+        }
+        const out = errs.join("");
+        expect(out).toContain('beflow: unknown project "ZZ"');
+        expect(out).not.toContain("beflow: beflow:");
+        expect(tracker.accepted).toHaveLength(0);
     });
 });
 
@@ -729,6 +840,17 @@ describe("runCli new", () => {
         expect(code).toBe(0);
         expect(tracker.created).toHaveLength(0);
     });
+
+    it("rejects an unknown project before prompting or creating", async () => {
+        const tracker = new CreateIssueTracker();
+        const { deps } = harness(tracker);
+        deps.askQuestions = async () => {
+            throw new Error("must not prompt for an unknown project");
+        };
+        const code = await runCli(["new", "ZZ", "generic"], deps);
+        expect(code).toBe(1);
+        expect(tracker.created).toHaveLength(0);
+    });
 });
 
 describe("runCli doctor", () => {
@@ -740,7 +862,7 @@ describe("runCli doctor", () => {
                 plane: {
                     apiKeyEnv: "BEFLOW_TEST_KEY",
                     baseUrl: "https://api.plane.so",
-                    workspaceSlug: "your-workspace",
+                    workspaceSlug: "acme",
                 },
             },
         };
@@ -752,6 +874,33 @@ describe("runCli doctor", () => {
             const code = await runCli(["doctor"], { ...deps, cwd: "/cwd" });
             expect(code).toBe(0);
             expect(trace.logs.some((l) => l.includes("✓ config —"))).toBe(true);
+        } finally {
+            delete process.env.BEFLOW_TEST_KEY;
+        }
+    });
+
+    it("flags a placeholder workspace under tracker config on a plain run (no --ping)", async () => {
+        const { deps, trace } = harness();
+        const placeholder: Config = {
+            ...config,
+            trackers: {
+                plane: {
+                    apiKeyEnv: "BEFLOW_TEST_KEY",
+                    baseUrl: "https://api.plane.so",
+                    workspaceSlug: "your-workspace",
+                },
+            },
+        };
+        process.env.BEFLOW_TEST_KEY = "token";
+        deps.loadConfig = () => placeholder;
+        deps.fileExists = () => true;
+        deps.onPath = () => true;
+        try {
+            const code = await runCli(["doctor"], deps);
+            expect(code).toBe(1);
+            expect(
+                trace.logs.some((l) => l.includes("✗ tracker config") && l.includes('placeholder "your-workspace"')),
+            ).toBe(true);
         } finally {
             delete process.env.BEFLOW_TEST_KEY;
         }
@@ -820,7 +969,7 @@ describe("runCli doctor", () => {
                 plane: {
                     apiKeyEnv: "BEFLOW_TEST_KEY",
                     baseUrl: "https://api.plane.so",
-                    workspaceSlug: "your-workspace",
+                    workspaceSlug: "acme",
                 },
             },
         };
@@ -857,7 +1006,7 @@ describe("runCli doctor", () => {
                 plane: {
                     apiKeyEnv: "BEFLOW_TEST_KEY",
                     baseUrl: "https://api.plane.so",
-                    workspaceSlug: "your-workspace",
+                    workspaceSlug: "acme",
                 },
             },
         };
@@ -923,6 +1072,20 @@ describe("runCli watch", () => {
         const code = await runCli(["watch"], deps);
         expect(code).toBe(1);
     });
+
+    it("rejects an unknown project before starting the loop", async () => {
+        const { deps, trace } = harness();
+        const code = await runCli(["watch", "ZZ"], deps);
+        expect(code).toBe(1);
+        expect(trace.watch).toHaveLength(0);
+    });
+
+    it("rejects a non-finite --interval (exponential overflow to Infinity)", async () => {
+        const { deps, trace } = harness();
+        const code = await runCli(["watch", "CG", "--interval", "1e1000"], deps);
+        expect(code).toBe(1);
+        expect(trace.watch).toHaveLength(0);
+    });
 });
 
 describe("runCli gc", () => {
@@ -935,6 +1098,15 @@ describe("runCli gc", () => {
     it("rejects a non-positive --older-than", async () => {
         const { deps } = harness();
         const code = await runCli(["gc", "--older-than", "0"], {
+            ...deps,
+            git: async () => ({ code: 0, stderr: "", stdout: "" }),
+        });
+        expect(code).toBe(1);
+    });
+
+    it("rejects a non-finite --older-than (exponential overflow to Infinity)", async () => {
+        const { deps } = harness();
+        const code = await runCli(["gc", "--older-than", "1e1000"], {
             ...deps,
             git: async () => ({ code: 0, stderr: "", stdout: "" }),
         });

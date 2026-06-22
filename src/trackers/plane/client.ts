@@ -155,6 +155,10 @@ export class PlaneClient {
         return this.request<RawProject>("POST", `/api/v1/workspaces/${this.slug}/projects/`, body);
     }
 
+    public async listProjects(): Promise<RawProject[]> {
+        return this.paginate<RawProject>(`/api/v1/workspaces/${this.slug}/projects/`);
+    }
+
     public async getWorkItemByIdentifier(key: string): Promise<RawWorkItem> {
         const path = `/api/v1/workspaces/${this.slug}/work-items/${key}/?expand=state,labels`;
         return this.request<RawWorkItem>("GET", path);

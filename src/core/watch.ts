@@ -1,4 +1,5 @@
 import type { AgentDriver } from "../agent/driver.ts";
+import { assertKnownProject } from "../config/registry.ts";
 import type { Config, Registry } from "../config/schema.ts";
 import type { Issue, Resolved } from "../model/types.ts";
 import { resolvePr } from "../resolve/precedence.ts";
@@ -229,6 +230,7 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
     const { config, registry } = deps.getSnapshot
         ? deps.getSnapshot()
         : { config: deps.config, registry: deps.registry };
+    assertKnownProject(registry, projectKey);
     const runsDir = resolveRunsDir(config.runs?.dir);
     const clock = deps.clock ?? systemClock;
     const sla = resolveSla(config, registry, projectKey);

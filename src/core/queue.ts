@@ -1,3 +1,4 @@
+import { assertKnownProject } from "../config/registry.ts";
 import type { Registry } from "../config/schema.ts";
 import type { Tracker } from "../trackers/tracker.ts";
 
@@ -20,6 +21,11 @@ export interface QueueOptions {
 }
 
 export async function queueView(deps: QueueDeps, opts: QueueOptions): Promise<QueueRow[]> {
+    if (opts.projects !== undefined) {
+        for (const project of opts.projects) {
+            assertKnownProject(deps.registry, project);
+        }
+    }
     const projects = opts.projects ?? Object.keys(deps.registry.projects);
     const state = opts.state ?? "Todo";
 

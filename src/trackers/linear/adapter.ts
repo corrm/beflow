@@ -412,6 +412,10 @@ export class LinearTracker implements Tracker {
         const team = await this.gateway.createTeam({ key: spec.identifier, name: spec.name });
         return { trackerProjectId: team.id };
     }
+
+    public async findProjectId(identifier: string): Promise<string | null> {
+        return this.gateway.findTeamId(identifier.toUpperCase());
+    }
 }
 
 export function createLinearTracker(

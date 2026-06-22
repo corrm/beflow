@@ -194,6 +194,9 @@ class ReviewTracker implements Tracker {
         throw new Error("not implemented");
     }
     async verifyAuth(): Promise<void> {}
+    async findProjectId(): Promise<string | null> {
+        return null;
+    }
 }
 
 function fakeDriver(assistantText: string): { driver: AgentDriver; seen: RunOptions[] } {

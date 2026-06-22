@@ -134,7 +134,7 @@ workspace-level toggle). When `opts.prune` is true, also delete orphan entities
 (those present in the tracker but absent from the template) and record them in
 `pruned`. When `opts.resolveModuleChanges` is provided, call it with the
 `ModuleChange` diff before pruning modules so the caller can rename instead of
-delete. Called by [`beflow setup`](commands.md#setup-project--update-project).
+delete. Called by [`beflow setup`](commands.md#setup-project).
 
 **`createProject(spec)`** — Create a new project from `ProjectCreateSpec`.
 Return `ProjectCreateResult`, which carries the tracker-internal project ID in
@@ -142,7 +142,7 @@ Return `ProjectCreateResult`, which carries the tracker-internal project ID in
 
 **`verifyAuth()`** — Cheap auth probe (e.g. a whoami call). Resolve when the
 token is valid; otherwise throw a clear, actionable error naming the API-key env
-var and `config.json`. [`beflow setup`](commands.md#setup-project--update-project)
+var and `config.json`. [`beflow setup`](commands.md#setup-project)
 calls this first so a bad or unconfigured token fails fast before the interactive
 walkthrough. Reuse existing config (the API-key env var and workspace slug); this
 adds no new config keys.

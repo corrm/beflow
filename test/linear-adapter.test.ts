@@ -42,6 +42,7 @@ interface FakeOptions {
     issue?: RawIssue;
     issueError?: Error;
     verifyAuthError?: Error;
+    foundTeamId?: string | null;
     issues?: RawIssue[];
     triage?: RawIssue[];
     states?: RawWorkflowState[];
@@ -68,6 +69,10 @@ function fakeGateway(opts: FakeOptions = {}) {
         createTeam: async (input) => {
             calls.push({ op: "createTeam", args: [input] });
             return { id: "team-new" };
+        },
+        findTeamId: async (key) => {
+            calls.push({ op: "findTeamId", args: [key] });
+            return opts.foundTeamId ?? null;
         },
         createComment: async (issueId, body) => {
             calls.push({ op: "createComment", args: [issueId, body] });
@@ -629,6 +634,20 @@ describe("LinearTracker.createProject", () => {
         const call = calls.find((c) => c.op === "createTeam")!;
         expect(call.args[0]).toEqual({ key: "NP", name: "New Project" });
         expect(result).toEqual({ trackerProjectId: "team-new" });
+    });
+});
+
+describe("LinearTracker.findProjectId", () => {
+    it("returns the team id when a team with the identifier exists", async () => {
+        const { tracker: t, calls } = tracker({ foundTeamId: "team-cg" });
+        expect(await t.findProjectId("cg")).toBe("team-cg");
+        const call = calls.find((c) => c.op === "findTeamId");
+        expect(call?.args[0]).toBe("CG");
+    });
+
+    it("returns null when no team matches", async () => {
+        const { tracker: t } = tracker({ foundTeamId: null });
+        expect(await t.findProjectId("ZZ")).toBeNull();
     });
 });
 

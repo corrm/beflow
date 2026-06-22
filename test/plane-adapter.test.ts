@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 
 import type { Config, Registry } from "../src/config/schema.ts";
 import type { Issue } from "../src/model/types.ts";
-import { PlaneTracker, createPlaneTracker } from "../src/trackers/plane/adapter.ts";
+import { PlaneTracker, createPlaneTracker, verifyPlaneConfig } from "../src/trackers/plane/adapter.ts";
 import { PlaneClient } from "../src/trackers/plane/client.ts";
 import type { FetchLike } from "../src/trackers/plane/client.ts";
 import { IssueNotFoundError } from "../src/trackers/tracker.ts";
@@ -1714,6 +1714,55 @@ describe("PlaneTracker.createProject", () => {
         expect(post.url).toContain("/workspaces/your-workspace/projects/");
         expect(post.body).toEqual({ identifier: "NP", name: "New Project" });
         expect(result).toEqual({ trackerProjectId: "proj-new" });
+    });
+});
+
+describe("verifyPlaneConfig", () => {
+    it("throws an actionable error when the workspace is still the placeholder", () => {
+        expect(() => {
+            verifyPlaneConfig({ apiKeyEnv: "PLANE_API_KEY", workspaceSlug: "your-workspace" });
+        }).toThrow(/placeholder "your-workspace".*PLANE_API_KEY/s);
+    });
+
+    it("accepts a real workspace slug", () => {
+        expect(() => {
+            verifyPlaneConfig({ apiKeyEnv: "PLANE_API_KEY", workspaceSlug: "acme" });
+        }).not.toThrow();
+    });
+});
+
+describe("PlaneTracker.findProjectId", () => {
+    function projTracker(routes: RouteHandler[]) {
+        const { fetch, calls } = router(routes);
+        const client = new PlaneClient({ apiKey: "k", fetch, workspaceSlug: "acme" });
+        return {
+            calls,
+            tracker: new PlaneTracker({
+                auth: { apiKeyEnv: "PLANE_API_KEY", workspaceSlug: "acme" },
+                client,
+                registry,
+            }),
+        };
+    }
+
+    const projectsRoute = (projects: unknown[]): RouteHandler => ({
+        match: (u, m) => m === "GET" && /\/workspaces\/acme\/projects\/(\?|$)/.test(u),
+        respond: () => page(projects),
+    });
+
+    it("returns the project id when an existing identifier matches (case-insensitive)", async () => {
+        const { tracker: t } = projTracker([
+            projectsRoute([
+                { id: "p-cg", identifier: "CG" },
+                { id: "p-pp", identifier: "PP" },
+            ]),
+        ]);
+        expect(await t.findProjectId("pp")).toBe("p-pp");
+    });
+
+    it("returns null when no project has that identifier", async () => {
+        const { tracker: t } = projTracker([projectsRoute([{ id: "p-cg", identifier: "CG" }])]);
+        expect(await t.findProjectId("ZZ")).toBeNull();
     });
 });
 

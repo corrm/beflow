@@ -6,6 +6,7 @@ import * as bun from "bun";
 import { resolveAcpCommand, resolveAcpxCommand } from "../agent/acpx.ts";
 import type { AgentDriver, AgentRunResult, RunOptions } from "../agent/driver.ts";
 import type { Report, ReportStatus } from "../agent/report.ts";
+import { assertKnownProject } from "../config/registry.ts";
 import type { Config, Project, Registry } from "../config/schema.ts";
 import type { Issue, JobKind, Resolved } from "../model/types.ts";
 import { resolve, resolvePolicy, resolvePr } from "../resolve/precedence.ts";
@@ -129,13 +130,10 @@ export async function resolveRun(
     registry: Registry,
     tracker: Tracker,
 ): Promise<ResolvedRun> {
-    const issue = await tracker.getIssue(key);
     const projectKey = projectKeyOf(key);
-    const project = registry.projects[projectKey];
-    if (project === undefined) {
-        const known = Object.keys(registry.projects).join(", ");
-        throw new Error(`beflow: unknown project key "${projectKey}" (known: ${known})`);
-    }
+    const project = assertKnownProject(registry, projectKey);
+
+    const issue = await tracker.getIssue(key);
 
     const resolved = resolve({
         cli,

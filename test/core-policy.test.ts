@@ -307,7 +307,7 @@ describe("evaluatePolicy agentowners", () => {
         expect(gpt.decision).toBe("block");
     });
 
-    it("defaults to .github/AGENTOWNERS and allows when the file is missing", async () => {
+    it("defaults to .github/AGENTOWNERS and fails closed (require_approval) when the file is missing", async () => {
         let seenPath = "";
         const reader: PolicyReader = async (path) => {
             seenPath = path;
@@ -315,8 +315,8 @@ describe("evaluatePolicy agentowners", () => {
         };
         const res = await evaluatePolicy(contextWith(), agentownersPolicy(), noopCmdExec, "/wt", reader);
         expect(seenPath).toBe("/wt/.github/AGENTOWNERS");
-        expect(res.decision).toBe("allow");
-        expect(res.reason).toBe("no AGENTOWNERS file at /wt/.github/AGENTOWNERS");
+        expect(res.decision).toBe("require_approval");
+        expect(res.reason).toContain("failing closed");
     });
 
     it("throws when a present file is malformed", async () => {

@@ -99,7 +99,7 @@ by giving it a new name.
 
 A template's `agent`, `jobKind`, and `runMode` are translated to the board's **picker
 labels** on creation: `agent:<name>`, `jobkind:<jobKind>`, `run:<mode>`. The board
-provisions these labels through [`beflow setup` / `beflow update`](commands.md#setup-project--update-project) — the `jobkind:*`
+provisions these labels through [`beflow setup` / `beflow update`](commands.md#setup-project) — the `jobkind:*`
 labels (`jobkind:triage`, `jobkind:spec`, `jobkind:implement`) are seeded alongside the
 `run:*` pickers. After adding a template that pins a new `jobKind`, run
 `beflow update <KEY>` once so the label exists. `createIssue` resolves each picker

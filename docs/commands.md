@@ -65,12 +65,12 @@ configured. Config is hot-reloaded between ticks.
 | `--interval <seconds>` | Poll interval (default 30).                                                         |
 | `--dry-run`            | Run a single observe-only tick that logs the dispatch decision and mutates nothing. |
 
-## `setup <project>` / `update <project>`
+## `setup <project>`
 
-Provision or reconcile a project's board to the beflow template (states,
-labels, work-item types, and modules from `module_repo_map`). Idempotent:
-creates what's missing, leaves matching items untouched. `update` is an alias of
-`setup`.
+Register a project (creating it in the tracker, or **adopting** an existing one)
+and reconcile its board to the beflow template (states, labels, work-item types,
+and modules from `module_repo_map`). Idempotent: creates what's missing, leaves
+matching items untouched.
 
 Before anything else, setup verifies the tracker token with a cheap auth probe
 and fails fast with an actionable message (naming the API-key env var, the
@@ -79,12 +79,32 @@ front, not after you have filled in the interactive walkthrough. A workspace
 slug still left at the bootstrap placeholder (`your-workspace`) is rejected
 before any network call.
 
-If the project key is not yet in `config.json`, setup interactively creates the
-tracker project (a Plane project / a Linear team), writes the config entry, then
-provisions the board.
+If the project key is **already** in `config.json`, setup just reconciles its
+board. If it is not, setup runs an interactive walkthrough:
+
+- It asks for the project name and identifier, then **checks the tracker right
+  after the identifier** — if a project with that identifier already exists, it
+  offers to **link** to it (adopting it into config) rather than failing with a
+  "identifier already taken" error. Decline, and it re-prompts for a new
+  identifier.
+- The default repo key is **`main`**.
+- The module→repo mapping prompt only appears when the project has more than one
+  repo (with a single repo every module maps to it implicitly).
 
 ```bash
 beflow setup APP
+```
+
+## `update <project>`
+
+Push config changes (modules, states, labels, work-item types) to an **existing**
+project's board. Unlike `setup`, `update` **never creates** a project: the key
+must already be in `config.json`, otherwise it fails fast (offline) telling you
+to run `beflow setup`. If the config entry has no tracker link yet, update
+resolves one by identifier and persists it, then reconciles.
+
+```bash
+beflow update APP
 beflow update APP --prune   # also delete orphan modules / agent: labels
 ```
 
@@ -145,8 +165,10 @@ beflow runs APP-42   # detail for one work item
 
 ## `doctor [--ping] [--fix]`
 
-Diagnose the local environment: config validity, API key presence, tool
-availability (`bun`/acpx/`gh`), and project roots/repos on disk.
+Diagnose the local environment: config validity (including a placeholder
+workspace slug), API key presence, tool availability (`bun`/acpx/`gh`), project
+roots/repos on disk, and a per-project **policy** line (each project's evaluator,
+and for `agentowners` whether its file is present).
 
 ```bash
 beflow doctor

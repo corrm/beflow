@@ -1058,6 +1058,55 @@ describe("runIssue", () => {
         expect(seen[0]!.task).not.toContain("Resuming");
     });
 
+    it("--fresh warns but still proceeds when the prior worktree removal fails", async () => {
+        const tracker = new FakeTracker(makeIssue({ meta: { runMode: "autonomous" } }));
+        const { fs } = memRunsFs();
+        const prior: RunRecord = {
+            agent: "claude",
+            cwd: "/wt/cg-42",
+            key: "CG-42",
+            jobKind: "implement",
+            runMode: "autonomous",
+            sessionName: "CG-42",
+            status: "in_progress",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+        saveRecord("/runs", prior, fs);
+
+        const calls: string[][] = [];
+        const git: Exec = async (cmd, args): Promise<ExecResult> => {
+            calls.push([cmd, ...args]);
+            if (args.includes("remove")) {
+                return { code: 1, stderr: "worktree is locked", stdout: "" };
+            }
+            return { code: 0, stderr: "", stdout: "" };
+        };
+        const logs: string[] = [];
+        const { driver, seen } = fakeDriver({ status: "failed", summary: "x" });
+        await runIssue(
+            "CG-42",
+            {},
+            deps({
+                driver,
+                fresh: true,
+                git,
+                log: (m) => {
+                    logs.push(m);
+                },
+                pathExists: () => true,
+                runsFs: fs,
+                tracker,
+            }),
+        );
+
+        expect(logs.some((m) => m.startsWith("beflow: warning — could not remove worktree at /wt/cg-42:"))).toBe(true);
+        expect(logs.some((m) => m.includes("worktree is locked"))).toBe(true);
+        // The failed removal does not block the fresh run: the worktree is re-added.
+        expect(calls.some((c) => c.includes("add"))).toBe(true);
+        expect(seen[0]!.cwd).toBe("/wt/cg-42");
+        expect(seen[0]!.task).not.toContain("Resuming");
+    });
+
     it("--fresh re-creates the worktree with -B even when the branch already exists", async () => {
         const tracker = new FakeTracker(makeIssue({ meta: { runMode: "autonomous" } }));
         const { fs } = memRunsFs();

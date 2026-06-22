@@ -806,11 +806,12 @@ function resolveEnrich(project: string, ctx: CliContext): EnrichIssue | undefine
     if (ctx.deps.enrich !== undefined) {
         return ctx.deps.enrich;
     }
-    const proj = ctx.registry.projects[project];
-    const repoName = proj?.default_repo;
-    const rawPath = repoName !== undefined ? proj?.repos[repoName] : undefined;
+    const proj = assertKnownProject(ctx.registry, project);
+    const rawPath = proj.repos[proj.default_repo];
     if (rawPath === undefined) {
-        ctx.log(`beflow: no default_repo path for "${project}"; enrich:true templates will use the form draft`);
+        ctx.log(
+            `beflow: default_repo "${proj.default_repo}" for "${project}" is not in projects.${project}.repos; enrich:true templates will use the form draft`,
+        );
         return undefined;
     }
     const enrichPrompt = loadEnrichPrompt(defaultPromptResolveDeps(ctx.dir, ctx.config.prompts?.dir));

@@ -298,8 +298,10 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
             if (deps.git !== undefined && rec.cwd) {
                 try {
                     await removeWorktree(rec.repoPath ?? rec.cwd, rec.cwd, deps.git);
-                } catch {
-                    // Best-effort: a stale or already-removed worktree must not block reconcile.
+                } catch (err) {
+                    log(
+                        `beflow: warning — could not remove worktree at ${rec.cwd}: ${err instanceof Error ? err.message : String(err)}`,
+                    );
                 }
             }
             deleteRecord(runsDir, rec.key, deps.runsFs);
@@ -371,8 +373,10 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
             if (deps.git !== undefined && record.cwd) {
                 try {
                     await removeWorktree(record.repoPath ?? record.cwd, record.cwd, deps.git);
-                } catch {
-                    // Best-effort: a stale or already-removed worktree must not block Done.
+                } catch (err) {
+                    log(
+                        `beflow: warning — could not remove worktree at ${record.cwd}: ${err instanceof Error ? err.message : String(err)}`,
+                    );
                 }
             }
             deleteRecord(runsDir, item.key, deps.runsFs);

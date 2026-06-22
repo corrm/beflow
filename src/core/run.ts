@@ -354,8 +354,10 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
             try {
                 await removeWorktree(resolved.repoPath, prior.cwd, deps.git);
                 log(`beflow: removed worktree at ${prior.cwd} (--fresh)`);
-            } catch {
-                // Best-effort: a stale or already-removed worktree must not block a fresh run
+            } catch (err) {
+                log(
+                    `beflow: warning — could not remove worktree at ${prior.cwd}: ${err instanceof Error ? err.message : String(err)}`,
+                );
             }
         }
         deleteRecord(runsDir, key, deps.runsFs);

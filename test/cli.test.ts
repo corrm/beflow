@@ -877,6 +877,34 @@ describe("runCli new", () => {
         expect(code).toBe(1);
         expect(tracker.created).toHaveLength(0);
     });
+
+    it("warns when default_repo names a repo absent from repos and still creates from the form draft", async () => {
+        const tracker = new CreateIssueTracker();
+        const { deps, trace } = harness(tracker);
+        const danglingRepoRegistry: Registry = {
+            projects: {
+                NR: {
+                    default_repo: "ghost",
+                    module_repo_map: {},
+                    name: "Dangling Repo",
+                    plane_project_id: "pid-nr",
+                    repos: {},
+                    root: "/root",
+                },
+            },
+            workspace: { id: "w", slug: "your-workspace" },
+        };
+        deps.loadRegistry = () => danglingRepoRegistry;
+        deps.askQuestions = async () => ({ context: "stuck", summary: "Fix login" });
+        deps.askConfirm = async () => true;
+        const code = await runCli(["new", "NR", "generic"], deps);
+        expect(code).toBe(0);
+        expect(trace.logs).toContain(
+            `beflow: default_repo "ghost" for "NR" is not in projects.NR.repos; enrich:true templates will use the form draft`,
+        );
+        expect(tracker.created).toHaveLength(1);
+        expect(tracker.created[0]!.project).toBe("NR");
+    });
 });
 
 describe("runCli doctor", () => {

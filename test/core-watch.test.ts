@@ -751,6 +751,55 @@ describe("watchTick", () => {
         expect(loadRecord("/runs", "CG-5", fs)).toBeNull();
     });
 
+    it("reconcile: warns but still reconciles when the worktree removal fails", async () => {
+        const tracker = new WatchTracker({
+            inReview: [],
+            issueStates: { "CG-5": { group: "cancelled", name: "Cancelled" } },
+            todo: [],
+        });
+        const { fs } = memRunsFs();
+        const logs: string[] = [];
+        saveRecord(
+            "/runs",
+            {
+                agent: "claude",
+                cwd: "/wt/cg-5",
+                key: "CG-5",
+                jobKind: "implement",
+                repoPath: "/repo/bin",
+                runMode: "autonomous",
+                sessionName: "CG-5",
+                status: "in_progress",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+            fs,
+        );
+        const { driver, seen } = fakeDriver();
+        const out = await watchTick(
+            "CG",
+            deps({
+                driver,
+                git: async (_cmd, args) => {
+                    if (args.includes("remove")) {
+                        return { code: 1, stderr: "worktree is locked", stdout: "" };
+                    }
+                    return { code: 0, stderr: "", stdout: "" };
+                },
+                log: (m) => {
+                    logs.push(m);
+                },
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        expect(out).toEqual({ action: "reconciled", key: "CG-5" });
+        expect(seen).toHaveLength(0);
+        expect(logs.some((m) => m.startsWith("beflow: warning — could not remove worktree at /wt/cg-5:"))).toBe(true);
+        expect(logs.some((m) => m.includes("worktree is locked"))).toBe(true);
+        // The failed removal does not block reconcile: the record is still dropped.
+        expect(loadRecord("/runs", "CG-5", fs)).toBeNull();
+    });
+
     it("reconcile GONE: a deleted issue parks the run, drops the record, and leaves the worktree", async () => {
         const tracker = new WatchTracker({
             inReview: [],
@@ -947,6 +996,58 @@ describe("watchTick", () => {
         const out = await watchTick("CG", deps({ driver, prMerged: async () => true, runsFs: fs, tracker }));
         expect(out).toEqual({ action: "completed" });
         expect(tracker.calls.stateUpdates).toEqual([{ key: "CG-3", state: "Done" }]);
+        expect(loadRecord("/runs", "CG-3", fs)).toBeNull();
+        expect(seen).toHaveLength(0);
+    });
+
+    it("auto-Done: warns but still completes when the worktree removal fails", async () => {
+        const tracker = new WatchTracker({
+            inReview: [issue({ key: "CG-3" })],
+            issueStates: { "CG-3": { group: "started", name: "In Review" } },
+            todo: [],
+        });
+        const { fs } = memRunsFs();
+        const logs: string[] = [];
+        saveRecord(
+            "/runs",
+            {
+                agent: "claude",
+                cwd: "/wt/cg-3",
+                key: "CG-3",
+                jobKind: "implement",
+                prUrl: "https://github.com/x/y/pull/1",
+                repoPath: "/repo/bin",
+                runMode: "autonomous",
+                sessionName: "CG-3",
+                status: "done",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+            fs,
+        );
+        const { driver, seen } = fakeDriver();
+        const out = await watchTick(
+            "CG",
+            deps({
+                driver,
+                git: async (_cmd, args) => {
+                    if (args.includes("remove")) {
+                        return { code: 1, stderr: "worktree is locked", stdout: "" };
+                    }
+                    return { code: 0, stderr: "", stdout: "" };
+                },
+                log: (m) => {
+                    logs.push(m);
+                },
+                prMerged: async () => true,
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        expect(out).toEqual({ action: "completed" });
+        expect(tracker.calls.stateUpdates).toEqual([{ key: "CG-3", state: "Done" }]);
+        expect(logs.some((m) => m.startsWith("beflow: warning — could not remove worktree at /wt/cg-3:"))).toBe(true);
+        expect(logs.some((m) => m.includes("worktree is locked"))).toBe(true);
+        // The failed removal does not block Done: the record is still dropped.
         expect(loadRecord("/runs", "CG-3", fs)).toBeNull();
         expect(seen).toHaveLength(0);
     });

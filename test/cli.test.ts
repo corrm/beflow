@@ -211,11 +211,13 @@ interface Harness {
         watch: { project: string; sleepMs: number }[];
         review: string[];
         logs: string[];
+        fails: string[];
     };
 }
 
 function harness(trackerImpl: Tracker = new FakeTracker()): Harness {
     const trace: Harness["trace"] = {
+        fails: [],
         logs: [],
         openLaunches: [],
         opened: [],
@@ -245,6 +247,10 @@ function harness(trackerImpl: Tracker = new FakeTracker()): Harness {
         createDriver: () => driver,
         createTracker: () => trackerImpl,
         cwd: "/cwd",
+        fail: (m) => {
+            trace.fails.push(m);
+            return 1;
+        },
         launchInteractive: async () => {
             trace.supervised += 1;
         },
@@ -495,6 +501,7 @@ describe("runCli", () => {
         expect(tracker.getIssueCalls).toBe(0);
         expect(trace.runIssue).toHaveLength(0);
         expect(trace.opened).toEqual([]);
+        expect(trace.fails).toEqual(["beflow: choose at most one run mode: --auto, --attend, or --open"]);
     });
 
     it("returns nonzero on a missing key", async () => {
@@ -781,21 +788,11 @@ describe("runCli runs", () => {
     });
 
     it("fails with an actionable hint when the key has no record", async () => {
-        const { deps } = harness();
+        const { deps, trace } = harness();
         deps.runsFs = runsFs({});
-        const errs: string[] = [];
-        const original = process.stderr.write.bind(process.stderr);
-        process.stderr.write = ((chunk: string | Uint8Array): boolean => {
-            errs.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
-            return true;
-        }) as typeof process.stderr.write;
-        try {
-            const code = await runCli(["runs", "CG-99"], deps);
-            expect(code).toBe(1);
-        } finally {
-            process.stderr.write = original;
-        }
-        expect(errs.join("")).toContain("beflow runs");
+        const code = await runCli(["runs", "CG-99"], deps);
+        expect(code).toBe(1);
+        expect(trace.fails.join("")).toContain("beflow runs");
     });
 
     it("reports an empty store", async () => {

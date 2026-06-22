@@ -94,6 +94,9 @@ export interface CliDeps {
     doctorFix?: DoctorFixDeps;
     ping?: Ping;
     log?: (msg: string) => void;
+    // Test-injection seam for failure output; defaults to writing to stderr and
+    // returning exit code 1. Mirrors `log` so tests can assert error messages.
+    fail?: (msg: string) => number;
     cwd?: string;
 }
 
@@ -195,11 +198,14 @@ function makeLog(deps: CliDeps): (msg: string) => void {
     return deps.log ?? ((msg: string): void => void process.stdout.write(`${msg}\n`));
 }
 
-function makeFail(): (msg: string) => number {
-    return (msg: string): number => {
-        process.stderr.write(`${msg}\n`);
-        return 1;
-    };
+function makeFail(deps: CliDeps): (msg: string) => number {
+    return (
+        deps.fail ??
+        ((msg: string): number => {
+            process.stderr.write(`${msg}\n`);
+            return 1;
+        })
+    );
 }
 
 // citty's `ParsedArgs<ArgsDef>` values are loosely typed; these narrow a single
@@ -223,7 +229,7 @@ interface Cli {
 // for help/dispatch without reaching into citty's loosely-typed `CommandDef`.
 function buildCli(deps: CliDeps): Cli {
     function ctx(): CliContext {
-        return loadContext(deps, makeLog(deps), makeFail());
+        return loadContext(deps, makeLog(deps), makeFail(deps));
     }
 
     const runCmd = defineCommand({
@@ -924,7 +930,7 @@ async function cmdGc(
     log: (msg: string) => void,
 ): Promise<number> {
     if (deps.git === undefined) {
-        return makeFail()("beflow: gc requires git, but no git executor is configured");
+        return makeFail(deps)("beflow: gc requires git, but no git executor is configured");
     }
     const config = deps.loadConfig(dir);
     const worktreesDir = resolveWorktreeDir(config.worktrees?.dir);
@@ -934,7 +940,9 @@ async function cmdGc(
     if (args.olderThan !== undefined) {
         const parsed = Number(args.olderThan);
         if (!Number.isFinite(parsed) || parsed <= 0) {
-            return makeFail()(`beflow: invalid --older-than "${args.olderThan}" (expected a positive number of days)`);
+            return makeFail(deps)(
+                `beflow: invalid --older-than "${args.olderThan}" (expected a positive number of days)`,
+            );
         }
         olderThanDays = parsed;
     }

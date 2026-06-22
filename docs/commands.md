@@ -149,10 +149,16 @@ beflow queue --project APP
 beflow queue --state "In Review"
 ```
 
-| Flag              | Description                       |
-| ----------------- | --------------------------------- |
-| `--project <key>` | Restrict to a single project.     |
-| `--state <name>`  | Restrict to a single board state. |
+| Flag              | Description                                  |
+| ----------------- | -------------------------------------------- |
+| `--project <key>` | Restrict to a single project.                |
+| `--state <name>`  | Restrict to a single board state.            |
+| `--json`          | Emit machine-readable JSON instead of table. |
+
+With `--json` the command writes a single `{ "rows": [...], "errors": [...] }`
+document to stdout (each row is `{ project, key, state, title, priority? }`) and
+suppresses the table. The exit code is unchanged (1 if any project errored).
+Per-project errors are reported under `errors`; nothing is written to stderr.
 
 ## `runs [key]`
 
@@ -161,9 +167,15 @@ Inspect persisted run records (read-only).
 ```bash
 beflow runs          # list all run records
 beflow runs APP-42   # detail for one work item
+beflow runs --json   # list every record as a JSON array
 ```
 
-## `doctor [--ping] [--fix]`
+With `--json`, `runs <key>` emits the matching run record as a JSON object and
+`runs` (no key) emits a JSON array of every record; the human-readable listing is
+suppressed. Exit codes are unchanged — an unknown key still fails to stderr with
+exit 1 and writes nothing to stdout.
+
+## `doctor [--ping] [--fix] [--json]`
 
 Diagnose the local environment: config validity (including a placeholder
 workspace slug), API key presence, tool availability (`bun`/acpx/`gh`), project
@@ -174,7 +186,14 @@ and for `agentowners` whether its file is present).
 beflow doctor
 beflow doctor --ping   # also hit the tracker read API and check board drift
 beflow doctor --fix    # auto-repair the safe config/structure problems
+beflow doctor --json   # emit machine-readable JSON instead of glyph lines
 ```
+
+With `--json` the command writes a single
+`{ "checks": [...], "ok": boolean }` document to stdout (each check is
+`{ name, level, detail, fixable? }`) and suppresses the glyph lines and the
+`--fix` hint; `--fix --json` also includes a `fixes` array of the repairs
+applied. The exit code is unchanged (1 if any check failed).
 
 When a problem is auto-fixable, plain `doctor` ends with a hint to run
 `doctor --fix`. `--fix` only ever touches beflow-owned config and state — never
@@ -209,3 +228,11 @@ beflow gc --prune --force      # also remove worktrees with uncommitted/unpushed
 | `--prune`             | Actually remove orphan worktrees (default: report only).                       |
 | `--older-than <days>` | Only consider worktrees older than N days.                                     |
 | `--force`             | Also remove worktrees with uncommitted/unpushed work — **destroys that work**. |
+| `--json`              | Emit the machine-readable plan instead of the report lines.                    |
+
+With `--json` the command writes a single
+`{ "pruned": [...], "held": [...], "skippedByAge": [...] }` plan to stdout and
+suppresses the report lines. Exit codes are unchanged. Because a destructive
+`--force --prune` confirmation prompt would corrupt the JSON output, that
+combination must be pre-authorized with `--yes`; otherwise `--json` fails to
+stderr with exit 1 and writes nothing to stdout.

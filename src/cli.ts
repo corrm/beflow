@@ -17,7 +17,7 @@ import { acceptIntake } from "./core/accept.ts";
 import { isDecisionHeld } from "./core/decision.ts";
 import { resolveDecisionsDir } from "./core/decisionlog.ts";
 import { doctor, fixDoctor } from "./core/doctor.ts";
-import type { DoctorCheck, DoctorFixDeps } from "./core/doctor.ts";
+import type { DoctorCheck, DoctorFixDeps, FixAction } from "./core/doctor.ts";
 import { assertBoardReady, boardDrift } from "./core/drift.ts";
 import { runGc } from "./core/gc.ts";
 import type { OrphanWorktree } from "./core/gc.ts";
@@ -218,6 +218,10 @@ function asBool(v: unknown): boolean | undefined {
     return typeof v === "boolean" ? v : undefined;
 }
 
+function printJson(log: (msg: string) => void, value: unknown): void {
+    log(JSON.stringify(value, null, 2));
+}
+
 interface Cli {
     root: CommandDef;
     subCommands: Record<string, CommandDef>;
@@ -286,11 +290,13 @@ function buildCli(deps: CliDeps): Cli {
 
     const queueCmd = defineCommand({
         args: {
+            json: { description: "emit machine-readable JSON to stdout", type: "boolean" },
             project: { description: "Restrict to a single project key", type: "string" },
             state: { description: "Restrict to a single state name", type: "string" },
         } satisfies ArgsDef as ArgsDef,
         meta: { description: "Print the work queue across projects", name: "queue" },
-        run: async ({ args }) => cmdQueue({ project: asStr(args.project), state: asStr(args.state) }, ctx()),
+        run: async ({ args }) =>
+            cmdQueue({ json: asBool(args.json), project: asStr(args.project), state: asStr(args.state) }, ctx()),
     });
 
     const watchCmd = defineCommand({
@@ -320,6 +326,7 @@ function buildCli(deps: CliDeps): Cli {
 
     const runsCmd = defineCommand({
         args: {
+            json: { description: "emit machine-readable JSON to stdout", type: "boolean" },
             key: {
                 description: "Work item key to inspect; omit to list all run records",
                 required: false,
@@ -327,7 +334,7 @@ function buildCli(deps: CliDeps): Cli {
             },
         } satisfies ArgsDef as ArgsDef,
         meta: { description: "Inspect persisted run records (read-only)", name: "runs" },
-        run: ({ args }) => cmdRuns({ key: asStr(args.key) }, ctx()),
+        run: ({ args }) => cmdRuns({ json: asBool(args.json), key: asStr(args.key) }, ctx()),
     });
 
     const acceptCmd = defineCommand({
@@ -354,12 +361,18 @@ function buildCli(deps: CliDeps): Cli {
     const doctorCmd = defineCommand({
         args: {
             fix: { description: "auto-repair fixable config/structure problems", type: "boolean" },
+            json: { description: "emit machine-readable JSON to stdout", type: "boolean" },
             ping: { description: "hit the tracker read API", type: "boolean" },
         } satisfies ArgsDef as ArgsDef,
         meta: { description: "Diagnose the local beflow environment", name: "doctor" },
         // doctor intentionally runs WITHOUT loadContext so it works with no config.
         run: async ({ args }) =>
-            cmdDoctor({ fix: asBool(args.fix), ping: asBool(args.ping) }, deps, deps.cwd ?? configDir(), makeLog(deps)),
+            cmdDoctor(
+                { fix: asBool(args.fix), json: asBool(args.json), ping: asBool(args.ping) },
+                deps,
+                deps.cwd ?? configDir(),
+                makeLog(deps),
+            ),
     });
 
     const gcCmd = defineCommand({
@@ -368,6 +381,7 @@ function buildCli(deps: CliDeps): Cli {
                 description: "also remove worktrees with uncommitted/unpushed work (DESTROYS that work)",
                 type: "boolean",
             },
+            "json": { description: "emit machine-readable JSON to stdout", type: "boolean" },
             "older-than": { description: "only consider worktrees older than N days", type: "string" },
             "prune": { description: "actually remove orphan worktrees (default: report only)", type: "boolean" },
             "yes": {
@@ -381,6 +395,7 @@ function buildCli(deps: CliDeps): Cli {
             cmdGc(
                 {
                     force: asBool(args.force),
+                    json: asBool(args.json),
                     olderThan: asStr(args["older-than"]),
                     prune: asBool(args.prune),
                     yes: asBool(args.yes),
@@ -593,7 +608,7 @@ async function cmdReview(args: { key: string }, ctx: CliContext): Promise<number
 // Read-only run-record inspector. With a KEY it prints that record's detail; with
 // None it lists every record. Touches only the local run store — no tracker calls,
 // No mutation.
-function cmdRuns(args: { key?: string | undefined }, ctx: CliContext): number {
+function cmdRuns(args: { key?: string | undefined; json?: boolean | undefined }, ctx: CliContext): number {
     const { deps, config, log, fail } = ctx;
     const runsDir = resolveRunsDir(config.runs?.dir);
     if (args.key !== undefined) {
@@ -602,6 +617,10 @@ function cmdRuns(args: { key?: string | undefined }, ctx: CliContext): number {
         if (record === null) {
             return fail(`beflow: no run record for "${args.key}" — run \`beflow runs\` to list known records`);
         }
+        if (args.json === true) {
+            printJson(log, record);
+            return 0;
+        }
         const model = config.agents[record.agent]?.model;
         for (const line of formatRunDetail(record, model)) {
             log(line);
@@ -609,6 +628,10 @@ function cmdRuns(args: { key?: string | undefined }, ctx: CliContext): number {
         return 0;
     }
     const records = deps.runsFs !== undefined ? listRecords(runsDir, deps.runsFs) : listRecords(runsDir);
+    if (args.json === true) {
+        printJson(log, records);
+        return 0;
+    }
     for (const line of formatRunList(records)) {
         log(line);
     }
@@ -664,7 +687,7 @@ async function cmdUpdate(args: { project: string; prune?: boolean | undefined },
 }
 
 async function cmdQueue(
-    args: { project?: string | undefined; state?: string | undefined },
+    args: { project?: string | undefined; state?: string | undefined; json?: boolean | undefined },
     ctx: CliContext,
 ): Promise<number> {
     const { tracker, registry, log } = ctx;
@@ -675,6 +698,10 @@ async function cmdQueue(
             ...(args.state !== undefined ? { state: args.state } : {}),
         },
     );
+    if (args.json === true) {
+        printJson(log, { errors, rows });
+        return errors.length > 0 ? 1 : 0;
+    }
     const filterParts = [
         `state ${args.state ?? "Todo"}`,
         ...(args.project !== undefined ? [`project ${args.project}`] : []),
@@ -878,18 +905,22 @@ function defaultDoctorFixDeps(deps: CliDeps, dir: string): DoctorFixDeps {
 }
 
 async function cmdDoctor(
-    args: { ping?: boolean | undefined; fix?: boolean | undefined },
+    args: { ping?: boolean | undefined; fix?: boolean | undefined; json?: boolean | undefined },
     deps: CliDeps,
     dir: string,
     log: (msg: string) => void,
 ): Promise<number> {
     const fileExists = deps.fileExists ?? existsSync;
     const onPath = deps.onPath ?? onPathDefault;
+    const json = args.json === true;
 
+    let actions: FixAction[] | undefined;
     if (args.fix === true) {
-        const actions = fixDoctor(deps.doctorFix ?? defaultDoctorFixDeps(deps, dir));
-        for (const action of actions) {
-            log(`✚ ${action.name} — ${action.detail}`);
+        actions = fixDoctor(deps.doctorFix ?? defaultDoctorFixDeps(deps, dir));
+        if (!json) {
+            for (const action of actions) {
+                log(`✚ ${action.name} — ${action.detail}`);
+            }
         }
     }
 
@@ -908,6 +939,15 @@ async function cmdDoctor(
             : {}),
     });
 
+    if (json) {
+        printJson(log, {
+            checks,
+            ok: !checks.some((c) => c.level === "fail"),
+            ...(actions !== undefined ? { fixes: actions } : {}),
+        });
+        return checks.some((c) => c.level === "fail") ? 1 : 0;
+    }
+
     for (const check of checks) {
         log(`${checkGlyph(check.level)} ${check.name} — ${check.detail}`);
     }
@@ -925,6 +965,7 @@ async function cmdGc(
         force?: boolean | undefined;
         olderThan?: string | undefined;
         yes?: boolean | undefined;
+        json?: boolean | undefined;
     },
     deps: CliDeps,
     dir: string,
@@ -933,6 +974,7 @@ async function cmdGc(
     if (deps.git === undefined) {
         return makeFail(deps)("beflow: gc requires git, but no git executor is configured");
     }
+    const json = args.json === true;
     const config = deps.loadConfig(dir);
     const worktreesDir = resolveWorktreeDir(config.worktrees?.dir);
     const runsDir = resolveRunsDir(config.runs?.dir);
@@ -948,9 +990,15 @@ async function cmdGc(
         olderThanDays = parsed;
     }
 
+    // A destructive prune normally asks for interactive confirmation; in json mode
+    // a prompt would corrupt stdout, so it must be pre-authorized with --yes.
+    if (json && args.force === true && args.prune === true && args.yes !== true) {
+        return makeFail(deps)("beflow: --json with --force --prune requires --yes");
+    }
+
     const askConfirm = deps.askConfirm ?? defaultAskConfirm;
     const confirm =
-        args.force === true && args.prune === true && args.yes !== true
+        !json && args.force === true && args.prune === true && args.yes !== true
             ? async (destructive: OrphanWorktree[]): Promise<boolean> =>
                   askConfirm(
                       `Destroy ${String(destructive.length)} worktree(s) with uncommitted/unpushed work?\n${destructive
@@ -959,16 +1007,19 @@ async function cmdGc(
                   )
             : undefined;
 
-    await runGc({
+    const plan = await runGc({
         force: args.force === true,
         git: deps.git,
-        log,
         prune: args.prune === true,
         runsDir,
         worktreesDir,
+        ...(json ? {} : { log }),
         ...(olderThanDays !== undefined ? { olderThanDays } : {}),
         ...(confirm !== undefined ? { confirm } : {}),
     });
+    if (json) {
+        printJson(log, plan);
+    }
     return 0;
 }
 

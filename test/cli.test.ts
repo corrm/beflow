@@ -274,6 +274,39 @@ function harness(trackerImpl: Tracker = new FakeTracker()): Harness {
     return { deps, trace };
 }
 
+// Narrows a parsed JSON value to a plain object map without an unsafe `as` cast
+// on `JSON.parse`'s `any` result; returns undefined when the shape doesn't match.
+function jsonObject(value: unknown): Record<string, unknown> | undefined {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return undefined;
+    }
+    const record: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value)) {
+        record[key] = val;
+    }
+    return record;
+}
+
+// Reads a named property off a parsed JSON value; undefined when not an object.
+function jsonProp(value: unknown, key: string): unknown {
+    return jsonObject(value)?.[key];
+}
+
+// Narrows an unknown to an array of object maps so json-mode tests can probe records.
+function jsonArray(value: unknown): Record<string, unknown>[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+    const records: Record<string, unknown>[] = [];
+    for (const entry of value) {
+        const obj = jsonObject(entry);
+        if (obj !== undefined) {
+            records.push(obj);
+        }
+    }
+    return records;
+}
+
 describe("runCli", () => {
     it("run CG-42 --auto dispatches runIssue (autonomous)", async () => {
         const { deps, trace } = harness();
@@ -722,6 +755,31 @@ describe("runCli queue", () => {
         expect(code).toBe(1);
         expect(trace.logs.some((l) => l.includes("beflow: CG: tracker down"))).toBe(true);
     });
+
+    it("--json emits rows and empty errors as a single JSON document", async () => {
+        const tracker = new QueueTracker();
+        const { deps, trace } = harness(tracker);
+        const code = await runCli(["queue", "--project", "CG", "--json"], deps);
+        expect(code).toBe(0);
+        const doc: unknown = JSON.parse(trace.logs.join(""));
+        expect(doc).toEqual({
+            errors: [],
+            rows: [{ key: "CG-42", priority: "high", project: "CG", state: "Todo", title: "Crash" }],
+        });
+    });
+
+    it("--json reports a failing project under errors and returns 1", async () => {
+        class FlakyTracker extends FakeTracker {
+            async listQueue(): Promise<Issue[]> {
+                throw new Error("tracker down");
+            }
+        }
+        const { deps, trace } = harness(new FlakyTracker());
+        const code = await runCli(["queue", "--project", "CG", "--json"], deps);
+        expect(code).toBe(1);
+        const doc: unknown = JSON.parse(trace.logs.join(""));
+        expect(doc).toEqual({ errors: [{ message: "tracker down", project: "CG" }], rows: [] });
+    });
 });
 
 describe("runCli runs", () => {
@@ -801,6 +859,40 @@ describe("runCli runs", () => {
         const code = await runCli(["runs"], deps);
         expect(code).toBe(0);
         expect(trace.logs.some((l) => l.includes("no run records"))).toBe(true);
+    });
+
+    it("--json emits a single record as a JSON object", async () => {
+        const { deps, trace } = harness();
+        deps.runsFs = runsFs({ "cg-42": record({ usage: { totalTokens: 140 } }) });
+        const code = await runCli(["runs", "CG-42", "--json"], deps);
+        expect(code).toBe(0);
+        const doc: unknown = JSON.parse(trace.logs.join(""));
+        expect(doc).toMatchObject({ agent: "claude", key: "CG-42", status: "done" });
+    });
+
+    it("--json emits the record list as a JSON array", async () => {
+        const { deps, trace } = harness();
+        deps.runsFs = runsFs({
+            "cg-1": record({ key: "CG-1" }),
+            "cg-2": record({ key: "CG-2", status: "failed" }),
+        });
+        const code = await runCli(["runs", "--json"], deps);
+        expect(code).toBe(0);
+        const doc: unknown = JSON.parse(trace.logs.join(""));
+        expect(Array.isArray(doc)).toBe(true);
+        expect(doc).toMatchObject([
+            { key: "CG-1", status: "done" },
+            { key: "CG-2", status: "failed" },
+        ]);
+    });
+
+    it("--json for an unknown key fails on stderr with no stdout", async () => {
+        const { deps, trace } = harness();
+        deps.runsFs = runsFs({});
+        const code = await runCli(["runs", "CG-99", "--json"], deps);
+        expect(code).toBe(1);
+        expect(trace.logs).toEqual([]);
+        expect(trace.fails.join("")).toContain("beflow runs");
     });
 });
 
@@ -1104,6 +1196,69 @@ describe("runCli doctor", () => {
         expect(trace.logs.some((l) => l.startsWith("✚"))).toBe(true);
         expect(trace.logs.some((l) => l.includes("config —"))).toBe(true);
     });
+
+    it("--json emits checks and ok as a single JSON document", async () => {
+        const { deps, trace } = harness();
+        const healthy: Config = {
+            ...config,
+            trackers: {
+                plane: {
+                    apiKeyEnv: "BEFLOW_TEST_KEY",
+                    baseUrl: "https://api.plane.so",
+                    workspaceSlug: "acme",
+                },
+            },
+        };
+        process.env.BEFLOW_TEST_KEY = "token";
+        deps.loadConfig = () => healthy;
+        deps.fileExists = () => true;
+        deps.onPath = () => true;
+        try {
+            const code = await runCli(["doctor", "--json"], deps);
+            expect(code).toBe(0);
+            expect(trace.logs.every((l) => !l.startsWith("✓"))).toBe(true);
+            const doc: unknown = JSON.parse(trace.logs.join(""));
+            expect(jsonProp(doc, "ok")).toBe(true);
+            const checks = jsonArray(jsonProp(doc, "checks"));
+            const configCheck = checks.find((c) => c.name === "config");
+            expect(configCheck?.level).toBe("pass");
+            expect(typeof configCheck?.detail).toBe("string");
+            for (const check of checks) {
+                expect(typeof check.name).toBe("string");
+                expect(["pass", "warn", "fail"].includes(String(check.level))).toBe(true);
+                expect(typeof check.detail).toBe("string");
+            }
+        } finally {
+            delete process.env.BEFLOW_TEST_KEY;
+        }
+    });
+
+    it("--fix --json includes the fix actions", async () => {
+        const { deps, trace } = harness();
+        const fakeFix: DoctorFixDeps = {
+            activeTrackerBlock: () => ({ apiKeyEnv: "PLANE_API_KEY" }),
+            bootstrap: "{}\n",
+            configPath: () => "/cfg/config.json",
+            dirExists: () => false,
+            ensureDir: () => {},
+            readConfig: () => null,
+            resolveDirs: () => ({ decisions: "/d/decisions", runs: "/d/runs", worktrees: "/d/worktrees" }),
+            writeConfig: () => {},
+        };
+        deps.doctorFix = fakeFix;
+        deps.fileExists = () => true;
+        deps.onPath = () => true;
+        await runCli(["doctor", "--fix", "--json"], deps);
+        expect(trace.logs.every((l) => !l.startsWith("✚"))).toBe(true);
+        const doc: unknown = JSON.parse(trace.logs.join(""));
+        const fixes = jsonArray(jsonProp(doc, "fixes"));
+        expect(fixes.length).toBeGreaterThan(0);
+        for (const fix of fixes) {
+            expect(typeof fix.name).toBe("string");
+            expect(typeof fix.detail).toBe("string");
+            expect(typeof fix.done).toBe("boolean");
+        }
+    });
 });
 
 describe("runCli watch", () => {
@@ -1192,5 +1347,35 @@ describe("runCli gc", () => {
         });
         expect(code).toBe(0);
         expect(asked).toBe(0);
+    });
+
+    it("--json emits the plan with pruned/held/skippedByAge arrays and no human lines", async () => {
+        const { deps, trace } = harness();
+        deps.loadConfig = () => ({ ...config, worktrees: { dir: join(tmpdir(), "beflow-gc-json-test") } });
+        const code = await runCli(["gc", "--json"], {
+            ...deps,
+            git: async () => ({ code: 0, stderr: "", stdout: "" }),
+        });
+        expect(code).toBe(0);
+        const plan: unknown = JSON.parse(trace.logs.join(""));
+        expect(plan).toEqual({ held: [], pruned: [], skippedByAge: [] });
+        expect(trace.logs.some((l) => l.includes("orphan worktree(s)"))).toBe(false);
+    });
+
+    it("--json with --force --prune but without --yes fails on stderr with no stdout", async () => {
+        const { deps, trace } = harness();
+        deps.loadConfig = () => ({ ...config, worktrees: { dir: join(tmpdir(), "beflow-gc-json-confirm-test") } });
+        let invokedGit = 0;
+        const code = await runCli(["gc", "--json", "--force", "--prune"], {
+            ...deps,
+            git: async () => {
+                invokedGit += 1;
+                return { code: 0, stderr: "", stdout: "" };
+            },
+        });
+        expect(code).toBe(1);
+        expect(trace.logs).toEqual([]);
+        expect(invokedGit).toBe(0);
+        expect(trace.fails.join("")).toContain("requires --yes");
     });
 });

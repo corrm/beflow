@@ -80,6 +80,26 @@ describe("doctor", () => {
         expect(find(checks, "tracker config").level).toBe("fail");
     });
 
+    it("fails tracker config when verifyTrackerConfig rejects the block (placeholder workspace)", async () => {
+        const checks = await doctor(
+            baseDeps({
+                verifyTrackerConfig: () => {
+                    throw new Error('beflow: Plane workspace is still the placeholder "your-workspace"');
+                },
+            }),
+        );
+        const tc = find(checks, "tracker config");
+        expect(tc.level).toBe("fail");
+        expect(tc.detail).toContain('placeholder "your-workspace"');
+    });
+
+    it("passes tracker config when verifyTrackerConfig accepts the block", async () => {
+        const checks = await doctor(baseDeps({ verifyTrackerConfig: () => undefined }));
+        const tc = find(checks, "tracker config");
+        expect(tc.level).toBe("pass");
+        expect(tc.detail).toContain("plane");
+    });
+
     it("fails when the registry has no projects", async () => {
         const empty: Registry = { ...registry, projects: {} };
         const checks = await doctor(baseDeps({ loadRegistry: () => empty }));
@@ -100,6 +120,31 @@ describe("doctor", () => {
         const repos = find(checks, "repos on disk");
         expect(repos.level).toBe("fail");
         expect(repos.detail).toContain("/repo/bin");
+    });
+
+    it("reports policy off by default for each project", async () => {
+        const checks = await doctor(baseDeps());
+        const policy = find(checks, "policy");
+        expect(policy.level).toBe("pass");
+        expect(policy.detail).toContain("CG: off");
+    });
+
+    it("warns when an agentowners gate is enabled but its file is missing", async () => {
+        const withPolicy: Config = { ...config, policy: { evaluator: "agentowners" } };
+        const checks = await doctor(
+            baseDeps({ fileExists: (p) => !p.includes("AGENTOWNERS"), loadConfig: () => withPolicy }),
+        );
+        const policy = find(checks, "policy");
+        expect(policy.level).toBe("warn");
+        expect(policy.detail).toContain("MISSING");
+    });
+
+    it("reports the agentowners path when the file is present", async () => {
+        const withPolicy: Config = { ...config, policy: { evaluator: "agentowners" } };
+        const checks = await doctor(baseDeps({ loadConfig: () => withPolicy }));
+        const policy = find(checks, "policy");
+        expect(policy.level).toBe("pass");
+        expect(policy.detail).toContain("agentowners");
     });
 
     it("checks the default bunx launcher and reports the resolved command", async () => {

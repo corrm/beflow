@@ -99,7 +99,12 @@ class FakeTracker implements Tracker {
     }
     async acceptInbox(): Promise<void> {}
     async inspectBoard(): Promise<BoardState> {
-        return { labels: [], modules: [], states: [], types: [] };
+        return {
+            labels: ["regression", "feature", "customer-reported", "security"],
+            modules: [],
+            states: ["Backlog", "Triage", "Todo"],
+            types: ["Bug", "Task", "Feature"],
+        };
     }
     async ensureBoard(): Promise<EnsureBoardResult> {
         return { created: [], orphans: [], pruned: [], skipped: [], updated: [], warnings: [] };
@@ -108,6 +113,9 @@ class FakeTracker implements Tracker {
         throw new Error("not implemented");
     }
     async verifyAuth(): Promise<void> {}
+    async findProjectId(): Promise<string | null> {
+        return null;
+    }
 }
 
 const BUG_TEMPLATE = `---
@@ -439,6 +447,123 @@ describe("newIssue — happy path", () => {
         });
         expect(issue?.key).toBe("CG-100");
         expect(logs).toContain("beflow: created CG-100");
+    });
+});
+
+describe("newIssue — template field validation", () => {
+    const BOGUS_STATE_TEMPLATE = `---
+name: bug
+description: bad state
+state: Nonexistent
+title: "t {{summary}}"
+questions:
+  - { key: summary, label: S, type: text }
+---
+body {{summary}}
+`;
+    const BOGUS_TYPE_TEMPLATE = `---
+name: bug
+description: bad type
+type: Widget
+title: "t {{summary}}"
+questions:
+  - { key: summary, label: S, type: text }
+---
+body {{summary}}
+`;
+    const BOGUS_LABEL_TEMPLATE = `---
+name: bug
+description: bad label
+labels: [nonsense]
+title: "t {{summary}}"
+questions:
+  - { key: summary, label: S, type: text }
+---
+body {{summary}}
+`;
+
+    it("fails fast on an unknown template state without asking questions or creating", async () => {
+        const tracker = new FakeTracker();
+        let asked = 0;
+        const deps = makeDeps({
+            askQuestions: async () => {
+                asked += 1;
+                return {};
+            },
+            templateDeps: depsFrom({ "/cfg/prompts/issues/bug.md": BOGUS_STATE_TEMPLATE }),
+            tracker,
+        });
+        expect(newIssue("CG", "bug", deps)).rejects.toThrow(
+            /template state "Nonexistent" is not on the CG board — valid: Backlog, Triage, Todo/,
+        );
+        expect(asked).toBe(0);
+        expect(tracker.createCalls).toHaveLength(0);
+    });
+
+    it("fails fast on an unknown template type", async () => {
+        const deps = makeDeps({
+            askQuestions: async () => ({ summary: "x" }),
+            templateDeps: depsFrom({ "/cfg/prompts/issues/bug.md": BOGUS_TYPE_TEMPLATE }),
+        });
+        expect(newIssue("CG", "bug", deps)).rejects.toThrow(/template type "Widget" is not on the CG board/);
+    });
+
+    it("fails fast on an unknown template label, listing the unknown label", async () => {
+        const deps = makeDeps({
+            askQuestions: async () => ({ summary: "x" }),
+            templateDeps: depsFrom({ "/cfg/prompts/issues/bug.md": BOGUS_LABEL_TEMPLATE }),
+        });
+        expect(newIssue("CG", "bug", deps)).rejects.toThrow(/template label\(s\) "nonsense" not on the CG board/);
+    });
+
+    it("proceeds when all declared fields are valid", async () => {
+        const tracker = new FakeTracker();
+        const deps = makeDeps({
+            askQuestions: async () => ({ steps: "boom", summary: "it broke" }),
+            tracker,
+        });
+        const issue = await newIssue("CG", "bug", deps);
+        expect(issue?.key).toBe("CG-100");
+        expect(tracker.createCalls).toHaveLength(1);
+    });
+
+    it("degrades safe and proceeds when inspectBoard throws", async () => {
+        class FlakyBoardTracker extends FakeTracker {
+            override async inspectBoard(): Promise<BoardState> {
+                throw new Error("network down");
+            }
+        }
+        const tracker = new FlakyBoardTracker();
+        const logs: string[] = [];
+        const deps = makeDeps({
+            askQuestions: async () => ({ steps: "boom", summary: "it broke" }),
+            log: (m) => {
+                logs.push(m);
+            },
+            tracker,
+        });
+        const issue = await newIssue("CG", "bug", deps);
+        expect(issue?.key).toBe("CG-100");
+        expect(tracker.createCalls).toHaveLength(1);
+        expect(logs).toContain("beflow: could not verify template fields against the board; proceeding");
+    });
+
+    it("skips the board lookup when the template declares no state/type/labels", async () => {
+        class CountingBoardTracker extends FakeTracker {
+            inspectCalls = 0;
+            override async inspectBoard(): Promise<BoardState> {
+                this.inspectCalls += 1;
+                return { labels: [], modules: [], states: [], types: [] };
+            }
+        }
+        const tracker = new CountingBoardTracker();
+        const deps = makeDeps({
+            askQuestions: async () => ({ summary: "plain summary" }),
+            templateDeps: depsFrom({ "/cfg/prompts/issues/plain.md": PLAIN_TEMPLATE }),
+            tracker,
+        });
+        await newIssue("CG", "plain", deps);
+        expect(tracker.inspectCalls).toBe(0);
     });
 });
 

@@ -170,11 +170,12 @@ With the above, a work item filed under the **Backend** module runs in `api`, a
 with no module (or one not in the map) falls back to `default_repo` (`api`).
 Override per run with `beflow run <KEY>-42 --repo web`.
 
-`beflow setup <PROJECT>` also scaffolds a recommended control-plane
-`.github/AGENTOWNERS` into each of these `repos` paths (existing files are left
-untouched). See the
-[recommended default](pr-ownership-and-policy.md#recommended-default-control-plane-by-default)
-for the content and how to activate it.
+When — and only when — you opt into the `agentowners` policy gate
+(`policy.evaluator = "agentowners"`), `beflow setup`/`update` scaffold a starter
+AGENTOWNERS file into each of these `repos` paths (at `agentownersPath`; existing
+files are left untouched). With any other evaluator, including the default `off`,
+beflow writes nothing into your repos. See
+[scaffolding the file](pr-ownership-and-policy.md#scaffolding-the-file-opt-in).
 
 ## Agents
 

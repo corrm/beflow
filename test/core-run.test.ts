@@ -112,7 +112,9 @@ class FakeTracker implements Tracker {
         this.movedToInProgress = issue.state.group === "started";
     }
 
+    getIssueCalls = 0;
     async getIssue(): Promise<Issue> {
+        this.getIssueCalls += 1;
         if (this.movedToInProgress) {
             return { ...this.issue, state: { group: "started", name: "In Progress" } };
         }
@@ -181,6 +183,9 @@ class FakeTracker implements Tracker {
         throw new Error("not implemented");
     }
     async verifyAuth(): Promise<void> {}
+    async findProjectId(): Promise<string | null> {
+        return null;
+    }
 }
 
 interface EnsureCall {
@@ -359,9 +364,12 @@ function capturingSink(): { sink: DecisionSink; events: DecisionEvent[] } {
 }
 
 describe("resolveRun", () => {
-    it("throws on an unknown project key", async () => {
+    it("throws on an unknown project key before any tracker call", async () => {
         const tracker = new FakeTracker(makeIssue({ key: "ZZ-1" }));
-        expect(resolveRun("ZZ-1", {}, config, registry, tracker)).rejects.toThrow(/unknown project key "ZZ"/);
+        expect(resolveRun("ZZ-1", {}, config, registry, tracker)).rejects.toThrow(
+            /unknown project "ZZ" \(known: .*\) — run `beflow setup ZZ`/,
+        );
+        expect(tracker.getIssueCalls).toBe(0);
     });
 
     it("resolves issue, project, and resolved fields", async () => {
@@ -1045,6 +1053,55 @@ describe("runIssue", () => {
         );
 
         // Best-effort removal of the prior worktree, then a fresh add.
+        expect(calls.some((c) => c.includes("add"))).toBe(true);
+        expect(seen[0]!.cwd).toBe("/wt/cg-42");
+        expect(seen[0]!.task).not.toContain("Resuming");
+    });
+
+    it("--fresh warns but still proceeds when the prior worktree removal fails", async () => {
+        const tracker = new FakeTracker(makeIssue({ meta: { runMode: "autonomous" } }));
+        const { fs } = memRunsFs();
+        const prior: RunRecord = {
+            agent: "claude",
+            cwd: "/wt/cg-42",
+            key: "CG-42",
+            jobKind: "implement",
+            runMode: "autonomous",
+            sessionName: "CG-42",
+            status: "in_progress",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+        };
+        saveRecord("/runs", prior, fs);
+
+        const calls: string[][] = [];
+        const git: Exec = async (cmd, args): Promise<ExecResult> => {
+            calls.push([cmd, ...args]);
+            if (args.includes("remove")) {
+                return { code: 1, stderr: "worktree is locked", stdout: "" };
+            }
+            return { code: 0, stderr: "", stdout: "" };
+        };
+        const logs: string[] = [];
+        const { driver, seen } = fakeDriver({ status: "failed", summary: "x" });
+        await runIssue(
+            "CG-42",
+            {},
+            deps({
+                driver,
+                fresh: true,
+                git,
+                log: (m) => {
+                    logs.push(m);
+                },
+                pathExists: () => true,
+                runsFs: fs,
+                tracker,
+            }),
+        );
+
+        expect(logs.some((m) => m.startsWith("beflow: warning — could not remove worktree at /wt/cg-42:"))).toBe(true);
+        expect(logs.some((m) => m.includes("worktree is locked"))).toBe(true);
+        // The failed removal does not block the fresh run: the worktree is re-added.
         expect(calls.some((c) => c.includes("add"))).toBe(true);
         expect(seen[0]!.cwd).toBe("/wt/cg-42");
         expect(seen[0]!.task).not.toContain("Resuming");

@@ -297,6 +297,48 @@ function buildPreview(draft: IssueDraft): string {
     ].join("\n");
 }
 
+// Validates the template-declared state / type / labels against the project's
+// board BEFORE prompting, so a bad value fails fast with an actionable error
+// instead of a raw tracker error after the user fills the whole form. Skips the
+// network call when the template declares none of those fields, and degrades
+// safe (warn + proceed) when the board lookup itself fails.
+async function validateTemplateFields(
+    project: string,
+    template: IssueTemplate,
+    deps: NewIssueDeps,
+    log: Logger,
+): Promise<void> {
+    const declaredLabels = (template.labels ?? []).filter((label) => labelPrefix(label) === null);
+    if (template.state === undefined && template.type === undefined && declaredLabels.length === 0) {
+        return;
+    }
+
+    let board: { states: string[]; labels: string[]; types: string[] };
+    try {
+        board = await deps.tracker.inspectBoard(project);
+    } catch {
+        log("beflow: could not verify template fields against the board; proceeding");
+        return;
+    }
+
+    if (template.state !== undefined && !board.states.includes(template.state)) {
+        throw new Error(
+            `beflow: template state "${template.state}" is not on the ${project} board — valid: ${board.states.join(", ")}`,
+        );
+    }
+    if (template.type !== undefined && !board.types.includes(template.type)) {
+        throw new Error(
+            `beflow: template type "${template.type}" is not on the ${project} board — valid: ${board.types.join(", ")}`,
+        );
+    }
+    const unknownLabels = declaredLabels.filter((label) => !board.labels.includes(label));
+    if (unknownLabels.length > 0) {
+        throw new Error(
+            `beflow: template label(s) ${unknownLabels.map((l) => `"${l}"`).join(", ")} not on the ${project} board — valid: ${board.labels.join(", ")}`,
+        );
+    }
+}
+
 export async function newIssue(
     project: string,
     templateName: string | undefined,
@@ -319,6 +361,8 @@ export async function newIssue(
         const chosen = await deps.askTemplate(list);
         template = loadIssueTemplate(chosen, deps.templateDeps);
     }
+
+    await validateTemplateFields(project, template, deps, log);
 
     const raw = await deps.askQuestions(template.questions);
     const answers = fillAnswers(template.questions, raw);

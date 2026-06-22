@@ -65,12 +65,12 @@ configured. Config is hot-reloaded between ticks.
 | `--interval <seconds>` | Poll interval (default 30).                                                         |
 | `--dry-run`            | Run a single observe-only tick that logs the dispatch decision and mutates nothing. |
 
-## `setup <project>` / `update <project>`
+## `setup <project>`
 
-Provision or reconcile a project's board to the beflow template (states,
-labels, work-item types, and modules from `module_repo_map`). Idempotent:
-creates what's missing, leaves matching items untouched. `update` is an alias of
-`setup`.
+Register a project (creating it in the tracker, or **adopting** an existing one)
+and reconcile its board to the beflow template (states, labels, work-item types,
+and modules from `module_repo_map`). Idempotent: creates what's missing, leaves
+matching items untouched.
 
 Before anything else, setup verifies the tracker token with a cheap auth probe
 and fails fast with an actionable message (naming the API-key env var, the
@@ -79,12 +79,32 @@ front, not after you have filled in the interactive walkthrough. A workspace
 slug still left at the bootstrap placeholder (`your-workspace`) is rejected
 before any network call.
 
-If the project key is not yet in `config.json`, setup interactively creates the
-tracker project (a Plane project / a Linear team), writes the config entry, then
-provisions the board.
+If the project key is **already** in `config.json`, setup just reconciles its
+board. If it is not, setup runs an interactive walkthrough:
+
+- It asks for the project name and identifier, then **checks the tracker right
+  after the identifier** — if a project with that identifier already exists, it
+  offers to **link** to it (adopting it into config) rather than failing with a
+  "identifier already taken" error. Decline, and it re-prompts for a new
+  identifier.
+- The default repo key is **`main`**.
+- The module→repo mapping prompt only appears when the project has more than one
+  repo (with a single repo every module maps to it implicitly).
 
 ```bash
 beflow setup APP
+```
+
+## `update <project>`
+
+Push config changes (modules, states, labels, work-item types) to an **existing**
+project's board. Unlike `setup`, `update` **never creates** a project: the key
+must already be in `config.json`, otherwise it fails fast (offline) telling you
+to run `beflow setup`. If the config entry has no tracker link yet, update
+resolves one by identifier and persists it, then reconciles.
+
+```bash
+beflow update APP
 beflow update APP --prune   # also delete orphan modules / agent: labels
 ```
 
@@ -129,10 +149,16 @@ beflow queue --project APP
 beflow queue --state "In Review"
 ```
 
-| Flag              | Description                       |
-| ----------------- | --------------------------------- |
-| `--project <key>` | Restrict to a single project.     |
-| `--state <name>`  | Restrict to a single board state. |
+| Flag              | Description                                  |
+| ----------------- | -------------------------------------------- |
+| `--project <key>` | Restrict to a single project.                |
+| `--state <name>`  | Restrict to a single board state.            |
+| `--json`          | Emit machine-readable JSON instead of table. |
+
+With `--json` the command writes a single `{ "rows": [...], "errors": [...] }`
+document to stdout (each row is `{ project, key, state, title, priority? }`) and
+suppresses the table. The exit code is unchanged (1 if any project errored).
+Per-project errors are reported under `errors`; nothing is written to stderr.
 
 ## `runs [key]`
 
@@ -141,18 +167,33 @@ Inspect persisted run records (read-only).
 ```bash
 beflow runs          # list all run records
 beflow runs APP-42   # detail for one work item
+beflow runs --json   # list every record as a JSON array
 ```
 
-## `doctor [--ping] [--fix]`
+With `--json`, `runs <key>` emits the matching run record as a JSON object and
+`runs` (no key) emits a JSON array of every record; the human-readable listing is
+suppressed. Exit codes are unchanged — an unknown key still fails to stderr with
+exit 1 and writes nothing to stdout.
 
-Diagnose the local environment: config validity, API key presence, tool
-availability (`bun`/acpx/`gh`), and project roots/repos on disk.
+## `doctor [--ping] [--fix] [--json]`
+
+Diagnose the local environment: config validity (including a placeholder
+workspace slug), API key presence, tool availability (`bun`/acpx/`gh`), project
+roots/repos on disk, and a per-project **policy** line (each project's evaluator,
+and for `agentowners` whether its file is present).
 
 ```bash
 beflow doctor
 beflow doctor --ping   # also hit the tracker read API and check board drift
 beflow doctor --fix    # auto-repair the safe config/structure problems
+beflow doctor --json   # emit machine-readable JSON instead of glyph lines
 ```
+
+With `--json` the command writes a single
+`{ "checks": [...], "ok": boolean }` document to stdout (each check is
+`{ name, level, detail, fixable? }`) and suppresses the glyph lines and the
+`--fix` hint; `--fix --json` also includes a `fixes` array of the repairs
+applied. The exit code is unchanged (1 if any check failed).
 
 When a problem is auto-fixable, plain `doctor` ends with a hint to run
 `doctor --fix`. `--fix` only ever touches beflow-owned config and state — never
@@ -187,3 +228,11 @@ beflow gc --prune --force      # also remove worktrees with uncommitted/unpushed
 | `--prune`             | Actually remove orphan worktrees (default: report only).                       |
 | `--older-than <days>` | Only consider worktrees older than N days.                                     |
 | `--force`             | Also remove worktrees with uncommitted/unpushed work — **destroys that work**. |
+| `--json`              | Emit the machine-readable plan instead of the report lines.                    |
+
+With `--json` the command writes a single
+`{ "pruned": [...], "held": [...], "skippedByAge": [...] }` plan to stdout and
+suppresses the report lines. Exit codes are unchanged. Because a destructive
+`--force --prune` confirmation prompt would corrupt the JSON output, that
+combination must be pre-authorized with `--yes`; otherwise `--json` fails to
+stderr with exit 1 and writes nothing to stdout.

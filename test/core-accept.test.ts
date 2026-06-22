@@ -81,6 +81,9 @@ class InboxTracker implements Tracker {
         throw new Error("not implemented");
     }
     async verifyAuth(): Promise<void> {}
+    async findProjectId(): Promise<string | null> {
+        return null;
+    }
 }
 
 describe("acceptIntake", () => {
@@ -98,6 +101,12 @@ describe("acceptIntake", () => {
     it("throws on an unknown id, listing available ids", async () => {
         const tracker = new InboxTracker([intake("i1"), intake("i2")]);
         expect(acceptIntake("CG", "zzz", { tracker })).rejects.toThrow(/unknown intake id "zzz".*available: i1, i2/);
+        expect(tracker.accepted).toHaveLength(0);
+    });
+
+    it("throws a clear empty-inbox error when there are no intake items", async () => {
+        const tracker = new InboxTracker([]);
+        expect(acceptIntake("CG", "i1", { tracker })).rejects.toThrow(/no intake items in CG/);
         expect(tracker.accepted).toHaveLength(0);
     });
 });

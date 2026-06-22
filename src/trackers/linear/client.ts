@@ -38,6 +38,7 @@ export interface LinearGateway {
     createState(teamKey: string, state: { name: string; type: StateGroupLike; color: string }): Promise<void>;
     createLabel(teamKey: string, label: { name: string; color?: string }): Promise<void>;
     createTeam(input: { key: string; name: string }): Promise<{ id: string }>;
+    findTeamId(key: string): Promise<string | null>; // the Linear team id for this key, or null when no such team exists
     deleteLabel(labelId: string): Promise<void>;
 }
 
@@ -292,6 +293,11 @@ export class LinearSdkGateway implements LinearGateway {
             throw new Error(`linear: createTeam "${input.name}" returned no team`);
         }
         return { id: team.id };
+    }
+
+    public async findTeamId(key: string): Promise<string | null> {
+        const conn = await this.client.teams({ filter: { key: { eq: key } } });
+        return conn.nodes[0]?.id ?? null;
     }
 }
 

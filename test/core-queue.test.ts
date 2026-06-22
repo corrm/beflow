@@ -101,6 +101,24 @@ class QueueTracker implements Tracker {
         throw new Error("not implemented");
     }
     async verifyAuth(): Promise<void> {}
+    async findProjectId(): Promise<string | null> {
+        return null;
+    }
+}
+
+class FlakyQueueTracker extends QueueTracker {
+    constructor(
+        byProject: Record<string, Issue[]>,
+        private readonly failProjects: Set<string>,
+    ) {
+        super(byProject);
+    }
+    override async listQueue(f: QueueFilter): Promise<Issue[]> {
+        if (this.failProjects.has(f.project)) {
+            throw new Error(`tracker exploded for ${f.project}`);
+        }
+        return super.listQueue(f);
+    }
 }
 
 describe("queueView", () => {
@@ -112,8 +130,9 @@ describe("queueView", () => {
             ],
             LP: [issue({ key: "LP-9", priority: "high", title: "lp top" })],
         });
-        const rows = await queueView({ registry, tracker }, {});
+        const { rows, errors } = await queueView({ registry, tracker }, {});
         expect(rows.map((r) => r.key)).toEqual(["CG-1", "CG-2", "LP-9"]);
+        expect(errors).toEqual([]);
         expect(rows[0]).toMatchObject({
             priority: "urgent",
             project: "CG",
@@ -132,13 +151,32 @@ describe("queueView", () => {
             CG: [issue({ key: "CG-1", title: "a" })],
             LP: [issue({ key: "LP-1", title: "b" })],
         });
-        const rows = await queueView({ registry, tracker }, { projects: ["LP"] });
+        const { rows } = await queueView({ registry, tracker }, { projects: ["LP"] });
         expect(rows.map((r) => r.key)).toEqual(["LP-1"]);
     });
 
     it("handles an empty queue", async () => {
         const tracker = new QueueTracker({ CG: [], LP: [] });
-        const rows = await queueView({ registry, tracker }, {});
+        const { rows, errors } = await queueView({ registry, tracker }, {});
         expect(rows).toEqual([]);
+        expect(errors).toEqual([]);
+    });
+
+    it("collects a per-project error and keeps the other project's rows", async () => {
+        const tracker = new FlakyQueueTracker(
+            { CG: [issue({ key: "CG-1", title: "a" })], LP: [issue({ key: "LP-1", title: "b" })] },
+            new Set(["CG"]),
+        );
+        const { rows, errors } = await queueView({ registry, tracker }, {});
+        expect(rows.map((r) => r.key)).toEqual(["LP-1"]);
+        expect(errors).toEqual([{ message: "tracker exploded for CG", project: "CG" }]);
+    });
+
+    it("rejects an unknown project before any tracker call", async () => {
+        const tracker = new QueueTracker({ CG: [], LP: [] });
+        expect(queueView({ registry, tracker }, { projects: ["ZZ"] })).rejects.toThrow(
+            /unknown project "ZZ" \(known: .*\)/,
+        );
+        expect(tracker.filters).toHaveLength(0);
     });
 });

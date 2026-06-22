@@ -1,5 +1,13 @@
-# beflow recommended control-plane AGENTOWNERS
-# These paths define how "passing" is decided and how the repo ships, so changes
-# to them require human approval before merge. Tune to taste.
-tests/** require_approval
-.github/** require_approval
+# beflow control-plane AGENTOWNERS
+#
+# Each non-comment line is:  <path-glob>  <decision>  [agent]
+#   decision = block | require_approval | allow   (most-restrictive wins)
+#   agent    = optional; restrict the rule to one agent by name
+#
+# This file is empty by default — beflow imposes no approval policy you didn't
+# write. With no rules every change is allowed; add rules to gate paths. Examples:
+#
+#   tests/**     require_approval     # changes to tests need a human sign-off
+#   .github/**   require_approval     # CI/workflow changes need a human sign-off
+#   migrations/** block               # never let an agent touch DB migrations
+#   src/**       allow  claude        # claude may freely change src/**

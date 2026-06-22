@@ -52,6 +52,7 @@ function fakeTracker(comments: Comment[]): Tracker {
         createProject: async (): Promise<ProjectCreateResult> => {
             throw new Error("not implemented");
         },
+        findProjectId: async () => null,
         readMetadata: (issue: Issue): IssueMeta => issue.meta,
         removeProperty: notImpl,
         updateState: notImpl,

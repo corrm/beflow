@@ -723,11 +723,7 @@ export class PlaneTracker implements Tracker {
     }
 
     public async verifyAuth(): Promise<void> {
-        if (this.auth.workspaceSlug === "your-workspace") {
-            throw new Error(
-                `beflow: Plane workspace is still the placeholder "your-workspace" — edit workspaceSlug + workspace in ${configPath()} and set ${this.auth.apiKeyEnv}, then re-run`,
-            );
-        }
+        verifyPlaneConfig(this.auth);
         try {
             await this.client.getMe();
         } catch (err) {
@@ -745,9 +741,27 @@ export class PlaneTracker implements Tracker {
         return { trackerProjectId: created.id };
     }
 
+    public async findProjectId(identifier: string): Promise<string | null> {
+        const wanted = identifier.toUpperCase();
+        const projects = await this.client.listProjects();
+        const match = projects.find((p) => (p.identifier ?? "").toUpperCase() === wanted);
+        return match?.id ?? null;
+    }
+
     private typesFeatureWarning(error: unknown): string {
         const reason = error instanceof Error ? error.message : String(error);
         return `plane: could not create work-item types (${reason}). Enable Workspace Settings → Features → Work Item Types, then re-run ensureBoard.`;
+    }
+}
+
+// Static, network-free validation of the Plane config block: catches a config
+// that is structurally present but not yet usable (the bootstrap placeholder).
+// Shared by verifyAuth (so setup fails fast) and doctor (so a plain run reports it).
+export function verifyPlaneConfig(auth: { workspaceSlug: string; apiKeyEnv: string }): void {
+    if (auth.workspaceSlug === "your-workspace") {
+        throw new Error(
+            `beflow: Plane workspace is still the placeholder "your-workspace" — edit workspaceSlug + workspace in ${configPath()} and set ${auth.apiKeyEnv}, then re-run`,
+        );
     }
 }
 

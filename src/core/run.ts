@@ -6,6 +6,7 @@ import * as bun from "bun";
 import { resolveAcpCommand, resolveAcpxCommand } from "../agent/acpx.ts";
 import type { AgentDriver, AgentRunResult, RunOptions } from "../agent/driver.ts";
 import type { Report, ReportStatus } from "../agent/report.ts";
+import { assertKnownProject } from "../config/registry.ts";
 import type { Config, Project, Registry } from "../config/schema.ts";
 import type { Issue, JobKind, Resolved } from "../model/types.ts";
 import { resolve, resolvePolicy, resolvePr } from "../resolve/precedence.ts";
@@ -129,13 +130,10 @@ export async function resolveRun(
     registry: Registry,
     tracker: Tracker,
 ): Promise<ResolvedRun> {
-    const issue = await tracker.getIssue(key);
     const projectKey = projectKeyOf(key);
-    const project = registry.projects[projectKey];
-    if (project === undefined) {
-        const known = Object.keys(registry.projects).join(", ");
-        throw new Error(`beflow: unknown project key "${projectKey}" (known: ${known})`);
-    }
+    const project = assertKnownProject(registry, projectKey);
+
+    const issue = await tracker.getIssue(key);
 
     const resolved = resolve({
         cli,
@@ -356,8 +354,10 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
             try {
                 await removeWorktree(resolved.repoPath, prior.cwd, deps.git);
                 log(`beflow: removed worktree at ${prior.cwd} (--fresh)`);
-            } catch {
-                // Best-effort: a stale or already-removed worktree must not block a fresh run
+            } catch (err) {
+                log(
+                    `beflow: warning — could not remove worktree at ${prior.cwd}: ${err instanceof Error ? err.message : String(err)}`,
+                );
             }
         }
         deleteRecord(runsDir, key, deps.runsFs);

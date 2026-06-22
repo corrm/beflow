@@ -149,7 +149,14 @@ async function evaluateAgentowners(
     const path = isAbsolute(configured) ? configured : resolve(cwd, configured);
     const text = await reader(path);
     if (text === undefined) {
-        return { decision: "allow", matchedRules: [], reason: `no AGENTOWNERS file at ${path}` };
+        // Fail closed: the gate is selected but its file is missing. Silently allowing
+        // would defeat the gate the user opted into, so require human approval until a
+        // file exists (run `beflow setup`/`update`, or create it).
+        return {
+            decision: "require_approval",
+            matchedRules: [],
+            reason: `agentowners gate is enabled but no file at ${path} — failing closed (require approval); create it or run \`beflow setup\`/\`update\``,
+        };
     }
     return evaluateRules(parseAgentowners(text), context);
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 
 import type { Config, Registry } from "../src/config/schema.ts";
-import { createTracker } from "../src/trackers/factory.ts";
+import { createTracker, verifyTrackerConfig } from "../src/trackers/factory.ts";
 import { LinearTracker } from "../src/trackers/linear/adapter.ts";
 import { PlaneTracker } from "../src/trackers/plane/adapter.ts";
 
@@ -65,5 +65,35 @@ describe("createTracker", () => {
         const bad = config({});
         (bad as { tracker: string }).tracker = "jira";
         expect(() => createTracker(bad, registry, {})).toThrow(/unknown tracker "jira"/);
+    });
+});
+
+describe("verifyTrackerConfig", () => {
+    it("throws on the plane placeholder workspace without needing an API key or a tracker instance", () => {
+        expect(() => {
+            verifyTrackerConfig(config({ tracker: "plane" }));
+        }).toThrow(/placeholder "your-workspace"/);
+    });
+
+    it("accepts a real plane workspace slug", () => {
+        const c = config({ tracker: "plane" });
+        c.trackers.plane = { apiKeyEnv: "PLANE_API_KEY", baseUrl: "https://api.plane.so", workspaceSlug: "acme" };
+        expect(() => {
+            verifyTrackerConfig(c);
+        }).not.toThrow();
+    });
+
+    it("is a no-op for linear", () => {
+        expect(() => {
+            verifyTrackerConfig(config({ tracker: "linear" }));
+        }).not.toThrow();
+    });
+
+    it("throws on an unknown tracker", () => {
+        const bad = config({});
+        (bad as { tracker: string }).tracker = "jira";
+        expect(() => {
+            verifyTrackerConfig(bad);
+        }).toThrow(/unknown tracker "jira"/);
     });
 });

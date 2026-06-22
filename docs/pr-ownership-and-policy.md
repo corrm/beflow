@@ -370,7 +370,11 @@ src/**              allow              claude
 ```
 
 **Missing file** — if the file does not exist at the resolved path, the
-evaluator returns `allow` and logs the reason. A missing file is not an error.
+evaluator **fails closed** and returns `require_approval` (not `allow`): you
+opted into a gate, so beflow won't silently ship. The run still opens a PR, but
+it stays a draft awaiting human sign-off until you create the file (via
+`beflow setup`/`update`, or by hand). `doctor` warns when an enabled gate's file
+is missing.
 
 **Malformed file** — an invalid decision token or a line with extra columns
 causes a hard error: the run is parked as **failed** (fails closed). A broken
@@ -384,36 +388,30 @@ default `.github/AGENTOWNERS`) is editable by the agent in the same change — i
 that matters for your threat model, use an out-of-repo absolute path, or switch
 to `evaluator: "command"` where you own the trust call entirely.
 
-#### Recommended default (control-plane by default)
+#### Scaffolding the file (opt-in)
 
-`beflow setup <PROJECT>` scaffolds a recommended `.github/AGENTOWNERS` into every
-repo the project maps, so the out-of-the-box posture protects the control plane —
-the paths that decide how "passing" is judged and how the repo ships. Existing
-AGENTOWNERS files are never overwritten; setup logs which files it wrote versus
-skipped.
+The gate is **opt-in and never written by default**. beflow only scaffolds an
+AGENTOWNERS file when you have actually selected the gate
+(`policy.evaluator = "agentowners"`, global or per-project). With any other
+evaluator — including the default `off` — `setup`/`update` write nothing into
+your repos.
+
+When the gate **is** selected, `setup`/`update` create a **starter** file at the
+configured `agentownersPath` (the exact location the evaluator reads), in every
+repo the project maps, if one is not already present. Existing files are never
+overwritten. The starter is intentionally **empty** — just header comments and
+examples, no active rules — so beflow imposes no approval policy you didn't
+write (no rule ⇒ allow). Add rules deliberately:
 
 ```
-# beflow recommended control-plane AGENTOWNERS
-# These paths define how "passing" is decided and how the repo ships, so changes
-# to them require human approval before merge. Tune to taste.
-tests/** require_approval
-.github/** require_approval
+# beflow control-plane AGENTOWNERS
+#   tests/**     require_approval   # changes to tests need a human sign-off
+#   .github/**   require_approval   # CI/workflow changes need a human sign-off
+#   migrations/** block             # never let an agent touch DB migrations
 ```
 
-`.github/**` covers CI (`.github/workflows`) and the AGENTOWNERS file itself
-(`.github/AGENTOWNERS`), so the gate is self-protecting. Both control-plane paths
-default to `require_approval`, not `block`: a run that touches them still opens a
-PR, but it stays a draft awaiting human sign-off.
-
-Scaffolding only writes the file — it does **not** activate the gate. To turn it
-on, set the evaluator in your beflow config (setup prints this reminder after it
-writes a file):
-
-```json
-"policy": {
-  "evaluator": "agentowners"
-}
-```
+If you want a gate with **no files in the repo at all**, use `evaluator: "globs"`
+with inline `rules` instead — same engine, zero repo footprint.
 
 #### `evaluator: "command"` example
 

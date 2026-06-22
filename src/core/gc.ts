@@ -197,6 +197,7 @@ export async function runGc(opts: {
     force?: boolean;
     olderThanDays?: number;
     log?: (m: string) => void;
+    confirm?: (destructive: OrphanWorktree[]) => Promise<boolean>;
 }): Promise<GcPlan> {
     const fs = opts.fs ?? nodeGcFs;
     const log =
@@ -228,6 +229,15 @@ export async function runGc(opts: {
             plan.pruned.push(orphan);
         } else {
             plan.held.push(orphan);
+        }
+    }
+
+    const destructive = plan.pruned.filter((o) => !o.safe);
+    if (prune && destructive.length > 0 && opts.confirm !== undefined) {
+        const proceed = await opts.confirm(destructive);
+        if (!proceed) {
+            log(`gc: aborted — ${String(destructive.length)} worktree(s) with uncommitted/unpushed work left intact`);
+            return plan;
         }
     }
 

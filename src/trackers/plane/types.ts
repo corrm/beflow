@@ -1,5 +1,6 @@
 export interface RawProject {
     id: string;
+    identifier?: string;
 }
 
 export interface RawUser {

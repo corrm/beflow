@@ -1,5 +1,10 @@
+import { isAbsolute, join } from "node:path";
+
 import { resolveAcpxCommand } from "../agent/acpx.ts";
 import type { Config, Registry } from "../config/schema.ts";
+import { resolvePolicy } from "../resolve/precedence.ts";
+import { DEFAULT_AGENTOWNERS_PATH } from "./scaffold.ts";
+import { expandHome } from "./worktree.ts";
 
 export type CheckLevel = "pass" | "warn" | "fail";
 
@@ -16,6 +21,7 @@ export interface DoctorDeps {
     env: NodeJS.ProcessEnv;
     fileExists: (path: string) => boolean;
     onPath: (cmd: string) => boolean;
+    verifyTrackerConfig?: (config: Config) => void;
     ping?: (config: Config, registry: Registry) => Promise<string>;
     boardChecks?: () => Promise<DoctorCheck[]>;
 }
@@ -53,11 +59,27 @@ export async function doctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
                 name: "tracker config",
             });
         } else {
-            checks.push({
-                detail: `"${config.tracker}" configured`,
-                level: "pass",
-                name: "tracker config",
-            });
+            let issue: string | undefined;
+            if (deps.verifyTrackerConfig !== undefined) {
+                try {
+                    deps.verifyTrackerConfig(config);
+                } catch (err) {
+                    issue = err instanceof Error ? err.message : String(err);
+                }
+            }
+            if (issue !== undefined) {
+                checks.push({
+                    detail: issue,
+                    level: "fail",
+                    name: "tracker config",
+                });
+            } else {
+                checks.push({
+                    detail: `"${config.tracker}" configured`,
+                    level: "pass",
+                    name: "tracker config",
+                });
+            }
         }
     } else {
         checks.push({
@@ -149,6 +171,39 @@ export async function doctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
             detail: "skipped — registry did not load",
             level: "fail",
             name: "repos on disk",
+        });
+    }
+
+    if (config !== undefined && registry !== undefined) {
+        const parts: string[] = [];
+        let anyMissing = false;
+        for (const key of Object.keys(registry.projects)) {
+            const policy = resolvePolicy(config, registry, key);
+            if (policy.evaluator !== "agentowners") {
+                parts.push(`${key}: ${policy.evaluator}`);
+                continue;
+            }
+            const rel = policy.agentownersPath ?? DEFAULT_AGENTOWNERS_PATH;
+            const repos = registry.projects[key]?.repos ?? {};
+            const missingIn = Object.entries(repos)
+                .filter(([, repoPath]) => {
+                    const p = isAbsolute(rel) ? rel : join(expandHome(repoPath), rel);
+                    return !deps.fileExists(p);
+                })
+                .map(([repoName]) => repoName);
+            if (missingIn.length > 0) {
+                anyMissing = true;
+                parts.push(
+                    `${key}: agentowners — file MISSING in ${missingIn.join(", ")} (runs require approval until created)`,
+                );
+            } else {
+                parts.push(`${key}: agentowners → ${rel}`);
+            }
+        }
+        checks.push({
+            detail: parts.length > 0 ? parts.join("; ") : "no projects",
+            level: anyMissing ? "warn" : "pass",
+            name: "policy",
         });
     }
 

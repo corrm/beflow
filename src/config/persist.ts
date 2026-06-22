@@ -13,7 +13,13 @@ export interface PersistDeps {
 
 const projectsExtractSchema = z.object({ projects: z.record(z.string(), z.unknown()).optional() });
 
-export function addProject(dir: string, key: string, project: Project, deps?: PersistDeps): void {
+function writeProjectEntry(
+    dir: string,
+    key: string,
+    project: Project,
+    failIfExists: boolean,
+    deps?: PersistDeps,
+): void {
     const path = join(dir, "config.json");
 
     function read(p: string): string {
@@ -45,7 +51,7 @@ export function addProject(dir: string, key: string, project: Project, deps?: Pe
 
     const { projects: existingProjects } = projectsExtractSchema.parse(parsed);
 
-    if (existingProjects?.[key] !== undefined) {
+    if (failIfExists && existingProjects?.[key] !== undefined) {
         throw new Error(`beflow: project "${key}" already exists in ${path}`);
     }
 
@@ -55,4 +61,16 @@ export function addProject(dir: string, key: string, project: Project, deps?: Pe
     fileSchema.parse(merged);
 
     write(path, `${JSON.stringify(merged, null, 2)}\n`);
+}
+
+// Register a brand-new project. Throws if the key already exists so `setup` never
+// silently clobbers an existing registry entry.
+export function addProject(dir: string, key: string, project: Project, deps?: PersistDeps): void {
+    writeProjectEntry(dir, key, project, true, deps);
+}
+
+// Write a project entry whether or not it already exists. Used by `update` to
+// persist a freshly resolved tracker link back into the config.
+export function upsertProject(dir: string, key: string, project: Project, deps?: PersistDeps): void {
+    writeProjectEntry(dir, key, project, false, deps);
 }

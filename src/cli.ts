@@ -3,12 +3,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { defineCommand, runCommand, showUsage } from "citty";
-import type { ArgsDef, CommandContext, CommandDef } from "citty";
+import type { ArgsDef, CommandDef } from "citty";
 
 import { AcpxDriver, resolveAcpCommand, resolveAcpxCommand } from "./agent/acpx.ts";
 import type { AgentDriver } from "./agent/driver.ts";
 import { loadConfig, loadRegistry } from "./config/load.ts";
 import { CONFIG_BOOTSTRAP, configDir, configPath } from "./config/paths.ts";
+import { assertKnownProject } from "./config/registry.ts";
 import type { Config, Registry } from "./config/schema.ts";
 import { ConfigStore, nodeConfigWatcher } from "./config/store.ts";
 import type { ConfigWatcher } from "./config/store.ts";
@@ -16,9 +17,10 @@ import { acceptIntake } from "./core/accept.ts";
 import { isDecisionHeld } from "./core/decision.ts";
 import { resolveDecisionsDir } from "./core/decisionlog.ts";
 import { doctor, fixDoctor } from "./core/doctor.ts";
-import type { DoctorCheck, DoctorFixDeps } from "./core/doctor.ts";
+import type { DoctorCheck, DoctorFixDeps, FixAction } from "./core/doctor.ts";
 import { assertBoardReady, boardDrift } from "./core/drift.ts";
 import { runGc } from "./core/gc.ts";
+import type { OrphanWorktree } from "./core/gc.ts";
 import { isThinIssue, resolveMinBodyChars } from "./core/inputquality.ts";
 import { defaultIssueTemplateResolveDeps } from "./core/issuetemplate.ts";
 import { defaultMcpDeps, loadMcpServers } from "./core/mcp.ts";
@@ -45,14 +47,16 @@ import type { OpenIssue, ResolvedRun, RunIssueDeps, RunOpenDeps, RunSupervisedDe
 import { listRecords, loadRecord, resolveRunsDir } from "./core/runstore.ts";
 import type { RunStoreFs } from "./core/runstore.ts";
 import { formatRunDetail, formatRunList } from "./core/runsview.ts";
-import { setupProject } from "./core/setup.ts";
+import { DEFAULT_AGENTOWNERS_PATH } from "./core/scaffold.ts";
+import { setupProject, updateProject } from "./core/setup.ts";
 import { beflowBoardTemplate } from "./core/template.ts";
 import { defaultPrChecks, defaultPrMerged, watch, watchTick } from "./core/watch.ts";
 import type { WatchControl, WatchDeps } from "./core/watch.ts";
 import { bunExec, expandHome, resolveWorktreeDir } from "./core/worktree.ts";
 import type { Exec } from "./core/worktree.ts";
 import type { Resolved } from "./model/types.ts";
-import { createTracker } from "./trackers/factory.ts";
+import { resolvePolicy } from "./resolve/precedence.ts";
+import { createTracker, verifyTrackerConfig } from "./trackers/factory.ts";
 import type { Tracker } from "./trackers/tracker.ts";
 
 export type WatchRunner = (projectKey: string, deps: WatchDeps, ctrl: WatchControl) => Promise<void>;
@@ -90,6 +94,9 @@ export interface CliDeps {
     doctorFix?: DoctorFixDeps;
     ping?: Ping;
     log?: (msg: string) => void;
+    // Test-injection seam for failure output; defaults to writing to stderr and
+    // returning exit code 1. Mirrors `log` so tests can assert error messages.
+    fail?: (msg: string) => number;
     cwd?: string;
 }
 
@@ -191,11 +198,14 @@ function makeLog(deps: CliDeps): (msg: string) => void {
     return deps.log ?? ((msg: string): void => void process.stdout.write(`${msg}\n`));
 }
 
-function makeFail(): (msg: string) => number {
-    return (msg: string): number => {
-        process.stderr.write(`${msg}\n`);
-        return 1;
-    };
+function makeFail(deps: CliDeps): (msg: string) => number {
+    return (
+        deps.fail ??
+        ((msg: string): number => {
+            process.stderr.write(`${msg}\n`);
+            return 1;
+        })
+    );
 }
 
 // citty's `ParsedArgs<ArgsDef>` values are loosely typed; these narrow a single
@@ -206,6 +216,10 @@ function asStr(v: unknown): string | undefined {
 
 function asBool(v: unknown): boolean | undefined {
     return typeof v === "boolean" ? v : undefined;
+}
+
+function printJson(log: (msg: string) => void, value: unknown): void {
+    log(JSON.stringify(value, null, 2));
 }
 
 interface Cli {
@@ -219,7 +233,7 @@ interface Cli {
 // for help/dispatch without reaching into citty's loosely-typed `CommandDef`.
 function buildCli(deps: CliDeps): Cli {
     function ctx(): CliContext {
-        return loadContext(deps, makeLog(deps), makeFail());
+        return loadContext(deps, makeLog(deps), makeFail(deps));
     }
 
     const runCmd = defineCommand({
@@ -250,33 +264,39 @@ function buildCli(deps: CliDeps): Cli {
             ),
     });
 
-    // setup and update share the same args + handler (update is an alias). citty
-    // has no first-class alias, so we register both subcommands with one handler.
+    // setup and update share args but NOT behavior: setup may create or adopt a
+    // project, update only reconciles an existing config project's board (never
+    // creates). They are distinct handlers.
     const setupArgs = {
         project: { description: "Registry project key, e.g. CG", required: true, type: "positional" },
         prune: { description: "delete orphan modules / agent: labels", type: "boolean" },
     } satisfies ArgsDef as ArgsDef;
-    async function setupRun({ args }: CommandContext): Promise<number> {
-        return cmdSetup({ project: String(args.project), prune: asBool(args.prune) }, ctx());
-    }
     const setupCmd = defineCommand({
         args: setupArgs,
-        meta: { description: "Provision/reconcile a project's board to the beflow template", name: "setup" },
-        run: setupRun,
+        meta: {
+            description: "Create or adopt a project, then reconcile its board to the beflow template",
+            name: "setup",
+        },
+        run: async ({ args }) => cmdSetup({ project: String(args.project), prune: asBool(args.prune) }, ctx()),
     });
     const updateCmd = defineCommand({
         args: setupArgs,
-        meta: { description: "Alias of setup: reconcile a project's board to the template", name: "update" },
-        run: setupRun,
+        meta: {
+            description: "Push config changes (modules, states, labels) to an existing project's board",
+            name: "update",
+        },
+        run: async ({ args }) => cmdUpdate({ project: String(args.project), prune: asBool(args.prune) }, ctx()),
     });
 
     const queueCmd = defineCommand({
         args: {
+            json: { description: "emit machine-readable JSON to stdout", type: "boolean" },
             project: { description: "Restrict to a single project key", type: "string" },
             state: { description: "Restrict to a single state name", type: "string" },
         } satisfies ArgsDef as ArgsDef,
         meta: { description: "Print the work queue across projects", name: "queue" },
-        run: async ({ args }) => cmdQueue({ project: asStr(args.project), state: asStr(args.state) }, ctx()),
+        run: async ({ args }) =>
+            cmdQueue({ json: asBool(args.json), project: asStr(args.project), state: asStr(args.state) }, ctx()),
     });
 
     const watchCmd = defineCommand({
@@ -306,6 +326,7 @@ function buildCli(deps: CliDeps): Cli {
 
     const runsCmd = defineCommand({
         args: {
+            json: { description: "emit machine-readable JSON to stdout", type: "boolean" },
             key: {
                 description: "Work item key to inspect; omit to list all run records",
                 required: false,
@@ -313,7 +334,7 @@ function buildCli(deps: CliDeps): Cli {
             },
         } satisfies ArgsDef as ArgsDef,
         meta: { description: "Inspect persisted run records (read-only)", name: "runs" },
-        run: ({ args }) => cmdRuns({ key: asStr(args.key) }, ctx()),
+        run: ({ args }) => cmdRuns({ json: asBool(args.json), key: asStr(args.key) }, ctx()),
     });
 
     const acceptCmd = defineCommand({
@@ -340,12 +361,18 @@ function buildCli(deps: CliDeps): Cli {
     const doctorCmd = defineCommand({
         args: {
             fix: { description: "auto-repair fixable config/structure problems", type: "boolean" },
+            json: { description: "emit machine-readable JSON to stdout", type: "boolean" },
             ping: { description: "hit the tracker read API", type: "boolean" },
         } satisfies ArgsDef as ArgsDef,
         meta: { description: "Diagnose the local beflow environment", name: "doctor" },
         // doctor intentionally runs WITHOUT loadContext so it works with no config.
         run: async ({ args }) =>
-            cmdDoctor({ fix: asBool(args.fix), ping: asBool(args.ping) }, deps, deps.cwd ?? configDir(), makeLog(deps)),
+            cmdDoctor(
+                { fix: asBool(args.fix), json: asBool(args.json), ping: asBool(args.ping) },
+                deps,
+                deps.cwd ?? configDir(),
+                makeLog(deps),
+            ),
     });
 
     const gcCmd = defineCommand({
@@ -354,14 +381,25 @@ function buildCli(deps: CliDeps): Cli {
                 description: "also remove worktrees with uncommitted/unpushed work (DESTROYS that work)",
                 type: "boolean",
             },
+            "json": { description: "emit machine-readable JSON to stdout", type: "boolean" },
             "older-than": { description: "only consider worktrees older than N days", type: "string" },
             "prune": { description: "actually remove orphan worktrees (default: report only)", type: "boolean" },
+            "yes": {
+                description: "skip the confirmation prompt for --force destructive prunes",
+                type: "boolean",
+            },
         } satisfies ArgsDef as ArgsDef,
         meta: { description: "Find and prune orphaned git worktrees beflow left behind", name: "gc" },
         // gc is a local disk op: like doctor, it runs WITHOUT loadContext (no tracker/API key).
         run: async ({ args }) =>
             cmdGc(
-                { force: asBool(args.force), olderThan: asStr(args["older-than"]), prune: asBool(args.prune) },
+                {
+                    force: asBool(args.force),
+                    json: asBool(args.json),
+                    olderThan: asStr(args["older-than"]),
+                    prune: asBool(args.prune),
+                    yes: asBool(args.yes),
+                },
                 deps,
                 deps.cwd ?? configDir(),
                 makeLog(deps),
@@ -410,7 +448,9 @@ export async function runCli(argv: string[], deps: CliDeps): Promise<number> {
                 : await runCommand(target.cmd, { rawArgs: target.rest });
         return typeof r.result === "number" ? r.result : 0;
     } catch (err) {
-        process.stderr.write(`beflow: ${err instanceof Error ? err.message : String(err)}\n`);
+        const msg = err instanceof Error ? err.message : String(err);
+        // Many thrown errors already carry the "beflow:" prefix; don't double it.
+        process.stderr.write(`${msg.startsWith("beflow:") ? msg : `beflow: ${msg}`}\n`);
         return 1;
     }
 }
@@ -439,6 +479,9 @@ async function cmdRun(
     args: RunArgs & { key: string; open?: boolean; fresh?: boolean; dryRun?: boolean },
     ctx: CliContext,
 ): Promise<number> {
+    if ([args.auto, args.attend, args.open].filter((flag) => flag === true).length > 1) {
+        return ctx.fail("beflow: choose at most one run mode: --auto, --attend, or --open");
+    }
     const { deps, config, registry, tracker, prompts, log } = ctx;
     const { key } = args;
     const cli = cliOverrides(args);
@@ -565,14 +608,18 @@ async function cmdReview(args: { key: string }, ctx: CliContext): Promise<number
 // Read-only run-record inspector. With a KEY it prints that record's detail; with
 // None it lists every record. Touches only the local run store — no tracker calls,
 // No mutation.
-function cmdRuns(args: { key?: string | undefined }, ctx: CliContext): number {
+function cmdRuns(args: { key?: string | undefined; json?: boolean | undefined }, ctx: CliContext): number {
     const { deps, config, log, fail } = ctx;
     const runsDir = resolveRunsDir(config.runs?.dir);
     if (args.key !== undefined) {
         const record =
             deps.runsFs !== undefined ? loadRecord(runsDir, args.key, deps.runsFs) : loadRecord(runsDir, args.key);
         if (record === null) {
-            return fail(`beflow: no run record for "${args.key}"`);
+            return fail(`beflow: no run record for "${args.key}" — run \`beflow runs\` to list known records`);
+        }
+        if (args.json === true) {
+            printJson(log, record);
+            return 0;
         }
         const model = config.agents[record.agent]?.model;
         for (const line of formatRunDetail(record, model)) {
@@ -581,21 +628,57 @@ function cmdRuns(args: { key?: string | undefined }, ctx: CliContext): number {
         return 0;
     }
     const records = deps.runsFs !== undefined ? listRecords(runsDir, deps.runsFs) : listRecords(runsDir);
+    if (args.json === true) {
+        printJson(log, records);
+        return 0;
+    }
     for (const line of formatRunList(records)) {
         log(line);
     }
     return 0;
 }
 
+// AGENTOWNERS is only scaffolded into the repos when the user has actually selected
+// the agentowners gate for the project (global or per-project). The scaffold lands
+// at the configured agentownersPath — exactly where the evaluator reads — so the
+// gate is never pointed at a missing file. Returns undefined → beflow writes nothing.
+function scaffoldOwnersFor(ctx: CliContext, projectKey: string): { path: string } | undefined {
+    const policy = resolvePolicy(ctx.config, ctx.registry, projectKey);
+    if (policy.evaluator !== "agentowners") {
+        return undefined;
+    }
+    return { path: policy.agentownersPath ?? DEFAULT_AGENTOWNERS_PATH };
+}
+
 async function cmdSetup(args: { project: string; prune?: boolean | undefined }, ctx: CliContext): Promise<number> {
     const { deps, tracker, config, registry, dir, log } = ctx;
     const agents = [...new Set([config.agent, ...Object.keys(config.agents)])].sort();
+    const scaffoldOwners = scaffoldOwnersFor(ctx, args.project);
     await setupProject(args.project, {
         agents,
         dir,
         log,
         prune: args.prune === true,
         registry,
+        ...(scaffoldOwners !== undefined ? { scaffoldOwners } : {}),
+        ...(deps.runsFs !== undefined ? { scaffoldFs: deps.runsFs } : {}),
+        tracker,
+        trackerName: config.tracker,
+    });
+    return 0;
+}
+
+async function cmdUpdate(args: { project: string; prune?: boolean | undefined }, ctx: CliContext): Promise<number> {
+    const { deps, tracker, config, registry, dir, log } = ctx;
+    const agents = [...new Set([config.agent, ...Object.keys(config.agents)])].sort();
+    const scaffoldOwners = scaffoldOwnersFor(ctx, args.project);
+    await updateProject(args.project, {
+        agents,
+        dir,
+        log,
+        prune: args.prune === true,
+        registry,
+        ...(scaffoldOwners !== undefined ? { scaffoldOwners } : {}),
         ...(deps.runsFs !== undefined ? { scaffoldFs: deps.runsFs } : {}),
         tracker,
         trackerName: config.tracker,
@@ -604,19 +687,30 @@ async function cmdSetup(args: { project: string; prune?: boolean | undefined }, 
 }
 
 async function cmdQueue(
-    args: { project?: string | undefined; state?: string | undefined },
+    args: { project?: string | undefined; state?: string | undefined; json?: boolean | undefined },
     ctx: CliContext,
 ): Promise<number> {
     const { tracker, registry, log } = ctx;
-    const rows = await queueView(
+    const { rows, errors } = await queueView(
         { registry, tracker },
         {
             ...(args.project !== undefined ? { projects: [args.project] } : {}),
             ...(args.state !== undefined ? { state: args.state } : {}),
         },
     );
-    printQueue(rows, log);
-    return 0;
+    if (args.json === true) {
+        printJson(log, { errors, rows });
+        return errors.length > 0 ? 1 : 0;
+    }
+    const filterParts = [
+        `state ${args.state ?? "Todo"}`,
+        ...(args.project !== undefined ? [`project ${args.project}`] : []),
+    ];
+    printQueue(rows, log, filterParts.join(", "));
+    for (const { project, message } of errors) {
+        log(`beflow: ${project}: ${message}`);
+    }
+    return errors.length > 0 ? 1 : 0;
 }
 
 async function cmdWatch(
@@ -626,11 +720,12 @@ async function cmdWatch(
     const { deps, config, registry, tracker, prompts, log, fail } = ctx;
     const projectKey = args.project;
     const intervalSec = args.interval !== undefined ? Number(args.interval) : 30;
-    if (Number.isNaN(intervalSec) || intervalSec <= 0) {
-        return fail(`beflow: invalid --interval "${String(args.interval)}"`);
+    if (!Number.isFinite(intervalSec) || intervalSec <= 0) {
+        return fail(`beflow: invalid --interval "${String(args.interval)}" (expected a positive number of seconds)`);
     }
 
     try {
+        assertKnownProject(registry, projectKey);
         await assertBoardReady(projectKey, tracker, log);
     } catch (err) {
         return fail(err instanceof Error ? err.message : String(err));
@@ -684,10 +779,13 @@ async function cmdWatch(
     }
 
     let stopped = false;
-    function onSigint(): void {
+    function onStop(): void {
         stopped = true;
     }
-    process.once("SIGINT", onSigint);
+    // SIGTERM as well as SIGINT: a backgrounded/service watch is shut down with
+    // SIGTERM, and it should stop gracefully after the current tick like Ctrl-C does.
+    process.once("SIGINT", onStop);
+    process.once("SIGTERM", onStop);
     const runner = deps.watch ?? watch;
     try {
         await runner(projectKey, watchDeps, {
@@ -695,20 +793,23 @@ async function cmdWatch(
             sleepMs: intervalSec * 1000,
         });
     } finally {
-        process.removeListener("SIGINT", onSigint);
+        process.removeListener("SIGINT", onStop);
+        process.removeListener("SIGTERM", onStop);
         store.stop();
     }
     return 0;
 }
 
 async function cmdAccept(args: { project: string; intake: string }, ctx: CliContext): Promise<number> {
-    const { tracker, log } = ctx;
+    const { tracker, registry, log } = ctx;
+    assertKnownProject(registry, args.project);
     const item = await acceptIntake(args.project, args.intake, { log, tracker });
     log(`beflow: ${args.project} accepted ${item.id} → Backlog`);
     return 0;
 }
 
 async function cmdNew(args: { project: string; template?: string | undefined }, ctx: CliContext): Promise<number> {
+    assertKnownProject(ctx.registry, args.project);
     const templateDeps = defaultIssueTemplateResolveDeps(ctx.dir, ctx.config.prompts?.dir);
     const enrich = resolveEnrich(args.project, ctx);
     const deps: NewIssueDeps = {
@@ -732,11 +833,12 @@ function resolveEnrich(project: string, ctx: CliContext): EnrichIssue | undefine
     if (ctx.deps.enrich !== undefined) {
         return ctx.deps.enrich;
     }
-    const proj = ctx.registry.projects[project];
-    const repoName = proj?.default_repo;
-    const rawPath = repoName !== undefined ? proj?.repos[repoName] : undefined;
+    const proj = assertKnownProject(ctx.registry, project);
+    const rawPath = proj.repos[proj.default_repo];
     if (rawPath === undefined) {
-        ctx.log(`beflow: no default_repo path for "${project}"; enrich:true templates will use the form draft`);
+        ctx.log(
+            `beflow: default_repo "${proj.default_repo}" for "${project}" is not in projects.${project}.repos; enrich:true templates will use the form draft`,
+        );
         return undefined;
     }
     const enrichPrompt = loadEnrichPrompt(defaultPromptResolveDeps(ctx.dir, ctx.config.prompts?.dir));
@@ -803,18 +905,22 @@ function defaultDoctorFixDeps(deps: CliDeps, dir: string): DoctorFixDeps {
 }
 
 async function cmdDoctor(
-    args: { ping?: boolean | undefined; fix?: boolean | undefined },
+    args: { ping?: boolean | undefined; fix?: boolean | undefined; json?: boolean | undefined },
     deps: CliDeps,
     dir: string,
     log: (msg: string) => void,
 ): Promise<number> {
     const fileExists = deps.fileExists ?? existsSync;
     const onPath = deps.onPath ?? onPathDefault;
+    const json = args.json === true;
 
+    let actions: FixAction[] | undefined;
     if (args.fix === true) {
-        const actions = fixDoctor(deps.doctorFix ?? defaultDoctorFixDeps(deps, dir));
-        for (const action of actions) {
-            log(`✚ ${action.name} — ${action.detail}`);
+        actions = fixDoctor(deps.doctorFix ?? defaultDoctorFixDeps(deps, dir));
+        if (!json) {
+            for (const action of actions) {
+                log(`✚ ${action.name} — ${action.detail}`);
+            }
         }
     }
 
@@ -824,6 +930,7 @@ async function cmdDoctor(
         loadConfig: () => deps.loadConfig(dir),
         loadRegistry: () => deps.loadRegistry(dir),
         onPath,
+        verifyTrackerConfig,
         ...(args.ping === true && deps.ping !== undefined
             ? {
                   boardChecks: async (): Promise<DoctorCheck[]> => boardChecks(deps, dir),
@@ -831,6 +938,15 @@ async function cmdDoctor(
               }
             : {}),
     });
+
+    if (json) {
+        printJson(log, {
+            checks,
+            ok: !checks.some((c) => c.level === "fail"),
+            ...(actions !== undefined ? { fixes: actions } : {}),
+        });
+        return checks.some((c) => c.level === "fail") ? 1 : 0;
+    }
 
     for (const check of checks) {
         log(`${checkGlyph(check.level)} ${check.name} — ${check.detail}`);
@@ -844,14 +960,21 @@ async function cmdDoctor(
 }
 
 async function cmdGc(
-    args: { prune?: boolean | undefined; force?: boolean | undefined; olderThan?: string | undefined },
+    args: {
+        prune?: boolean | undefined;
+        force?: boolean | undefined;
+        olderThan?: string | undefined;
+        yes?: boolean | undefined;
+        json?: boolean | undefined;
+    },
     deps: CliDeps,
     dir: string,
     log: (msg: string) => void,
 ): Promise<number> {
     if (deps.git === undefined) {
-        return makeFail()("beflow: gc requires git, but no git executor is configured");
+        return makeFail(deps)("beflow: gc requires git, but no git executor is configured");
     }
+    const json = args.json === true;
     const config = deps.loadConfig(dir);
     const worktreesDir = resolveWorktreeDir(config.worktrees?.dir);
     const runsDir = resolveRunsDir(config.runs?.dir);
@@ -859,21 +982,44 @@ async function cmdGc(
     let olderThanDays: number | undefined;
     if (args.olderThan !== undefined) {
         const parsed = Number(args.olderThan);
-        if (Number.isNaN(parsed) || parsed <= 0) {
-            return makeFail()(`beflow: invalid --older-than "${args.olderThan}" (expected a positive number of days)`);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+            return makeFail(deps)(
+                `beflow: invalid --older-than "${args.olderThan}" (expected a positive number of days)`,
+            );
         }
         olderThanDays = parsed;
     }
 
-    await runGc({
+    // A destructive prune normally asks for interactive confirmation; in json mode
+    // a prompt would corrupt stdout, so it must be pre-authorized with --yes.
+    if (json && args.force === true && args.prune === true && args.yes !== true) {
+        return makeFail(deps)("beflow: --json with --force --prune requires --yes");
+    }
+
+    const askConfirm = deps.askConfirm ?? defaultAskConfirm;
+    const confirm =
+        !json && args.force === true && args.prune === true && args.yes !== true
+            ? async (destructive: OrphanWorktree[]): Promise<boolean> =>
+                  askConfirm(
+                      `Destroy ${String(destructive.length)} worktree(s) with uncommitted/unpushed work?\n${destructive
+                          .map((o) => o.path)
+                          .join("\n")}`,
+                  )
+            : undefined;
+
+    const plan = await runGc({
         force: args.force === true,
         git: deps.git,
-        log,
         prune: args.prune === true,
         runsDir,
         worktreesDir,
+        ...(json ? {} : { log }),
         ...(olderThanDays !== undefined ? { olderThanDays } : {}),
+        ...(confirm !== undefined ? { confirm } : {}),
     });
+    if (json) {
+        printJson(log, plan);
+    }
     return 0;
 }
 
@@ -940,9 +1086,9 @@ function checkGlyph(level: DoctorCheck["level"]): string {
     return glyphs[level];
 }
 
-function printQueue(rows: QueueRow[], log: (msg: string) => void): void {
+function printQueue(rows: QueueRow[], log: (msg: string) => void, filter?: string): void {
     if (rows.length === 0) {
-        log("beflow: queue empty");
+        log(filter !== undefined ? `beflow: no items matching ${filter}` : "beflow: queue empty");
         return;
     }
     const cells = rows.map((r) => ({

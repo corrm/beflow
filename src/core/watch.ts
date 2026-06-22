@@ -284,7 +284,10 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
                 );
                 return { action: "orphaned", key: rec.key };
             }
-            throw err; // transient → bubble to the per-tick guard; record is KEPT, retried next tick
+            log(
+                `beflow: watch ${projectKey} — resume ${rec.key} check errored: ${err instanceof Error ? err.message : String(err)} (kept, retry next tick)`,
+            );
+            continue; // transient → keep the record, skip this one, try the next active record
         }
         if (issue.archived === true) {
             // Archived. Same conservative park: stop acting on it, leave the worktree.
@@ -329,9 +332,9 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
             return { action: "resumed", key: rec.key };
         } catch (err) {
             log(
-                `beflow: watch ${projectKey} — resume ${rec.key} errored: ${err instanceof Error ? err.message : String(err)}`,
+                `beflow: watch ${projectKey} — resume ${rec.key} errored: ${err instanceof Error ? err.message : String(err)} (kept, retry next tick)`,
             );
-            return { action: "error", key: rec.key };
+            continue; // poison item → skip it, let the loop try the next active record
         }
     }
 
@@ -418,10 +421,19 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
             await deps.tracker.removeProperty(item, CHANGES_REQUESTED_LABEL);
             const beflowOwnsPr =
                 record?.jobKind === "implement" && resolvePr(config, registry, projectKey).owner === "beflow";
-            await runIssue(item.key, AUTONOMOUS_DISPATCH, {
-                ...runIssueDeps(deps, config, registry, log),
-                continuation: renderContinuation(deps.prompts, ctx, beflowOwnsPr),
-            });
+            try {
+                await runIssue(item.key, AUTONOMOUS_DISPATCH, {
+                    ...runIssueDeps(deps, config, registry, log),
+                    continuation: renderContinuation(deps.prompts, ctx, beflowOwnsPr),
+                });
+            } catch (err) {
+                await deps.tracker.addProperty(item, CHANGES_REQUESTED_LABEL);
+                const msg = err instanceof Error ? err.message : String(err);
+                log(
+                    `beflow: watch ${projectKey} — rework ${item.key} dispatch errored, restored ${CHANGES_REQUESTED_LABEL}: ${msg}`,
+                );
+                continue;
+            }
             log(`beflow: watch ${projectKey} — rework ${item.key}`);
             return { action: "rework", key: item.key };
         }
@@ -487,10 +499,17 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
                 ? `The CI checks on this PR are failing (${failingChecks}). Investigate the failures, fix them, and push your branch (beflow updates the PR). Then emit the report block.`
                 : `The CI checks on this PR are failing (${failingChecks}). Investigate the failures, fix them, and update the existing PR (${record.prUrl}). Then emit the report block.`;
             const continuation = `${ciNote}\n\n${renderContinuation(deps.prompts, ctx, beflowOwnsPr)}`;
-            await runIssue(item.key, AUTONOMOUS_DISPATCH, {
-                ...runIssueDeps(deps, config, registry, log),
-                continuation,
-            });
+            try {
+                await runIssue(item.key, AUTONOMOUS_DISPATCH, {
+                    ...runIssueDeps(deps, config, registry, log),
+                    continuation,
+                });
+            } catch (err) {
+                log(
+                    `beflow: watch ${projectKey} — CI-rework ${item.key} dispatch errored: ${err instanceof Error ? err.message : String(err)} (retry next tick)`,
+                );
+                continue;
+            }
             // RunIssue rewrites the record from scratch (resetting attempts to 0 on a
             // Continuation re-dispatch) — re-stamp the accumulated counter + loop-safety SHA.
             const after = loadRecord(runsDir, item.key, deps.runsFs);
@@ -624,9 +643,11 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
         });
         if (ctx.newComments.length > 0) {
             // A human re-activated this item; clear the reason-tag that parked it.
+            const removed: string[] = [];
             for (const label of [BLOCKED_LABEL, FAILED_LABEL]) {
                 if (item.labels.includes(label)) {
                     await deps.tracker.removeProperty(item, label);
+                    removed.push(label);
                 }
             }
             if (record?.escalatedAt !== undefined) {
@@ -634,10 +655,19 @@ export async function watchTick(projectKey: string, deps: WatchDeps): Promise<Wa
             }
             const beflowOwnsPr =
                 record?.jobKind === "implement" && resolvePr(config, registry, projectKey).owner === "beflow";
-            await runIssue(item.key, AUTONOMOUS_DISPATCH, {
-                ...runIssueDeps(deps, config, registry, log),
-                continuation: renderContinuation(deps.prompts, ctx, beflowOwnsPr),
-            });
+            try {
+                await runIssue(item.key, AUTONOMOUS_DISPATCH, {
+                    ...runIssueDeps(deps, config, registry, log),
+                    continuation: renderContinuation(deps.prompts, ctx, beflowOwnsPr),
+                });
+            } catch (err) {
+                for (const label of removed) {
+                    await deps.tracker.addProperty(item, label);
+                }
+                const msg = err instanceof Error ? err.message : String(err);
+                log(`beflow: watch ${projectKey} — answered ${item.key} dispatch errored, restored labels: ${msg}`);
+                continue;
+            }
             log(`beflow: watch ${projectKey} — answered ${item.key}`);
             return { action: "answered", key: item.key };
         }

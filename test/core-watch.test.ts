@@ -221,6 +221,31 @@ function throwingDriver(): { driver: AgentDriver; seen: RunOptions[] } {
     return { driver, seen };
 }
 
+// A driver that throws for the listed session keys and succeeds for the rest.
+// Used to drive a per-item runIssue failure (the dispatch seam) without aborting
+// The other items.
+function keyedThrowingDriver(failKeys: string[]): { driver: AgentDriver; seen: RunOptions[] } {
+    const seen: RunOptions[] = [];
+    const driver: AgentDriver = {
+        cancel: async () => {},
+        ensureSession: async () => {},
+        run: async (opts: RunOptions): Promise<AgentRunResult> => {
+            seen.push(opts);
+            if (failKeys.includes(opts.sessionKey)) {
+                throw new Error("agent exploded");
+            }
+            return {
+                exitCode: 0,
+                raw: [],
+                report: { status: "done", summary: "s" },
+                stream: { assistantText: "", toolCalls: [] },
+                timedOut: false,
+            };
+        },
+    };
+    return { driver, seen };
+}
+
 function memRunsFs(): { fs: RunStoreFs; store: Map<string, string> } {
     const store = new Map<string, string>();
     const fs: RunStoreFs = {
@@ -536,16 +561,24 @@ describe("watchTick", () => {
             fs,
         );
         const { driver } = fakeDriver();
+        const logs: string[] = [];
         const out = await watchTick(
             "CG",
             deps({
                 driver,
                 git: async () => ({ code: 0, stdout: "", stderr: "" }),
+                log: (m) => {
+                    logs.push(m);
+                },
                 runsFs: fs,
                 tracker,
             }),
         );
-        expect(out).toEqual({ action: "error", key: "CG-5" });
+        // The poison resume is logged-and-skipped, not rethrown; with nothing else to do
+        // The tick falls through to idle. The record is kept for the next tick.
+        expect(out).toEqual({ action: "idle" });
+        expect(logs.some((m) => m.includes("resume CG-5 errored") && m.includes("retry next tick"))).toBe(true);
+        expect(loadRecord("/runs", "CG-5", fs)).not.toBeNull();
     });
 
     it("honors getSnapshot over the stale deps.config/registry", async () => {
@@ -669,6 +702,94 @@ describe("watchTick", () => {
         const out = await watchTick("CG", deps({ driver, runsFs: fs, tracker }));
         expect(out).toEqual({ action: "idle" });
         expect(seen).toHaveLength(0);
+    });
+
+    it("crash-resume isolation: a poison record's runIssue throw is logged and the loop tries the next record", async () => {
+        // Two active autonomous in_progress records. The first (CG-5) explodes on
+        // Dispatch; the second (CG-6) must still get resumed in the SAME tick.
+        const tracker = new WatchTracker({ inReview: [], todo: [] });
+        const { fs } = memRunsFs();
+        for (const key of ["CG-5", "CG-6"]) {
+            saveRecord(
+                "/runs",
+                {
+                    agent: "claude",
+                    cwd: "/repo/bin",
+                    key,
+                    jobKind: "implement",
+                    runMode: "autonomous",
+                    sessionName: key,
+                    status: "in_progress",
+                    updatedAt: "2026-01-01T00:00:00.000Z",
+                },
+                fs,
+            );
+        }
+        const { driver, seen } = keyedThrowingDriver(["CG-5"]);
+        const logs: string[] = [];
+        const out = await watchTick(
+            "CG",
+            deps({
+                driver,
+                log: (m) => {
+                    logs.push(m);
+                },
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        // The poison item is logged and skipped; the healthy one is resumed.
+        expect(out).toEqual({ action: "resumed", key: "CG-6" });
+        expect(seen.map((s) => s.sessionKey).sort()).toEqual(["CG-5", "CG-6"]);
+        expect(logs.some((m) => m.includes("resume CG-5 errored") && m.includes("retry next tick"))).toBe(true);
+        // The poison record is not destroyed — it is kept for the next tick.
+        expect(loadRecord("/runs", "CG-5", fs)).not.toBeNull();
+    });
+
+    it("crash-resume isolation: a transient getIssue error keeps the record and continues the loop", async () => {
+        // CG-5's getIssue throws a non-IssueNotFoundError (transient); the loop must
+        // Log it, KEEP the record, and resume the next healthy record CG-6.
+        const tracker = new WatchTracker({
+            inReview: [],
+            issueErrors: { "CG-5": new Error("plane: GET failed with 503") },
+            todo: [],
+        });
+        const { fs } = memRunsFs();
+        for (const key of ["CG-5", "CG-6"]) {
+            saveRecord(
+                "/runs",
+                {
+                    agent: "claude",
+                    cwd: "/repo/bin",
+                    key,
+                    jobKind: "implement",
+                    runMode: "autonomous",
+                    sessionName: key,
+                    status: "in_progress",
+                    updatedAt: "2026-01-01T00:00:00.000Z",
+                },
+                fs,
+            );
+        }
+        const { driver, seen } = fakeDriver();
+        const logs: string[] = [];
+        const out = await watchTick(
+            "CG",
+            deps({
+                driver,
+                log: (m) => {
+                    logs.push(m);
+                },
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        expect(out).toEqual({ action: "resumed", key: "CG-6" });
+        expect(seen).toHaveLength(1);
+        expect(seen[0]!.sessionKey).toBe("CG-6");
+        expect(logs.some((m) => m.includes("resume CG-5 check errored") && m.includes("503"))).toBe(true);
+        // The transient record is KEPT, never deleted.
+        expect(loadRecord("/runs", "CG-5", fs)).not.toBeNull();
     });
 
     it("quarantine: a record at the resume cap is quarantined in Needs Input", async () => {
@@ -897,7 +1018,7 @@ describe("watchTick", () => {
         expect(logs.some((m) => m.includes("/wt/cg-5") && m.includes("archived"))).toBe(true);
     });
 
-    it("reconcile TRANSIENT: a generic getIssue error rejects the tick and KEEPS the record", async () => {
+    it("reconcile TRANSIENT: a generic getIssue error is logged-and-skipped and KEEPS the record", async () => {
         const tracker = new WatchTracker({
             inReview: [],
             issueErrors: { "CG-5": new Error("plane: GET failed with 503") },
@@ -920,16 +1041,22 @@ describe("watchTick", () => {
             fs,
         );
         const { driver } = fakeDriver();
-        let caught: unknown;
-        try {
-            await watchTick("CG", deps({ driver, runsFs: fs, tracker }));
-        } catch (err) {
-            caught = err;
-        }
-        expect(caught).toBeInstanceOf(Error);
-        if (caught instanceof Error) {
-            expect(caught.message).toMatch(/503/);
-        }
+        const logs: string[] = [];
+        // The transient error no longer aborts the tick: it is logged-and-skipped so a
+        // Poison record can't starve later passes. The tick falls through to idle.
+        const out = await watchTick(
+            "CG",
+            deps({
+                driver,
+                log: (m) => {
+                    logs.push(m);
+                },
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        expect(out).toEqual({ action: "idle" });
+        expect(logs.some((m) => m.includes("resume CG-5 check errored") && m.includes("503"))).toBe(true);
         // The record is KEPT so the next tick retries it.
         expect(loadRecord("/runs", "CG-5", fs)).not.toBeNull();
     });
@@ -1215,6 +1342,60 @@ describe("watchTick", () => {
         expect(seen[0]!.task).not.toContain(AGENT_OWNED_MARKER);
     });
 
+    it("rework: restores the changes-requested label when runIssue throws", async () => {
+        const tracker = new WatchTracker({
+            comments: {
+                "CG-3": [
+                    {
+                        body: "please rename the function",
+                        createdAt: "2026-02-01T00:00:00.000Z",
+                        id: "h1",
+                        isBot: false,
+                    },
+                ],
+            },
+            inReview: [issue({ key: "CG-3", labels: ["changes-requested"] })],
+            todo: [],
+        });
+        const { fs } = memRunsFs();
+        saveRecord(
+            "/runs",
+            {
+                agent: "claude",
+                cwd: "/repo/bin",
+                key: "CG-3",
+                jobKind: "implement",
+                prUrl: "https://github.com/x/y/pull/1",
+                runMode: "autonomous",
+                sessionName: "CG-3",
+                status: "done",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+            fs,
+        );
+        const { driver } = throwingDriver();
+        const logs: string[] = [];
+        const out = await watchTick(
+            "CG",
+            deps({
+                driver,
+                log: (m) => {
+                    logs.push(m);
+                },
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        // The dispatch failed: the label removed before runIssue is restored, and the
+        // Tick falls through to idle (no rework action) rather than crashing.
+        expect(out).toEqual({ action: "idle" });
+        expect(tracker.calls.removedLabels).toEqual([{ key: "CG-3", label: "changes-requested" }]);
+        expect(tracker.calls.addedLabels).toEqual([{ key: "CG-3", label: "changes-requested" }]);
+        expect(logs.some((m) => m.includes("rework CG-3 dispatch errored") && m.includes("changes-requested"))).toBe(
+            true,
+        );
+    });
+
     it("changes-requested without feedback: posts guidance once and does not dispatch", async () => {
         const tracker = new WatchTracker({
             comments: { "CG-3": [] },
@@ -1312,6 +1493,50 @@ describe("watchTick", () => {
             { key: "CG-4", label: "failed" },
         ]);
         expect(seen).toHaveLength(1);
+    });
+
+    it("answered: restores the removed blocked label when runIssue throws", async () => {
+        const tracker = new WatchTracker({
+            comments: {
+                "CG-4": [{ body: "go ahead", createdAt: "2026-02-01T00:00:00.000Z", id: "h1", isBot: false }],
+            },
+            inReview: [],
+            needsInput: [issue({ key: "CG-4", labels: ["blocked"] })],
+            todo: [],
+        });
+        const { fs } = memRunsFs();
+        saveRecord(
+            "/runs",
+            {
+                agent: "claude",
+                cwd: "/repo/bin",
+                key: "CG-4",
+                jobKind: "implement",
+                runMode: "autonomous",
+                sessionName: "CG-4",
+                status: "blocked",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+            },
+            fs,
+        );
+        const { driver } = throwingDriver();
+        const logs: string[] = [];
+        const out = await watchTick(
+            "CG",
+            deps({
+                driver,
+                log: (m) => {
+                    logs.push(m);
+                },
+                runsFs: fs,
+                tracker,
+            }),
+        );
+        // Dispatch failed: the removed label is re-added and the tick falls through.
+        expect(out).toEqual({ action: "idle" });
+        expect(tracker.calls.removedLabels).toEqual([{ key: "CG-4", label: "blocked" }]);
+        expect(tracker.calls.addedLabels).toEqual([{ key: "CG-4", label: "blocked" }]);
+        expect(logs.some((m) => m.includes("answered CG-4 dispatch errored"))).toBe(true);
     });
 });
 
@@ -1937,30 +2162,15 @@ describe("watch loop", () => {
     });
 
     it("a transient tick error is caught, logged, and the loop continues to the next tick", async () => {
-        // An in_progress autonomous record whose getIssue throws a generic error
-        // Makes watchTick reject; the per-tick guard in watch() must catch it,
-        // Log it, and keep looping rather than crash the daemon.
+        // A Todo item whose blockedBy fetch throws makes watchTick reject; the per-tick
+        // Guard in watch() must catch it, log it, and keep looping rather than crash
+        // The daemon.
         const tracker = new WatchTracker({
+            blockerErrors: { "CG-9": new Error("plane: GET failed with 503") },
             inReview: [],
-            issueErrors: { "CG-5": new Error("plane: GET failed with 503") },
-            todo: [],
+            todo: [issue({ key: "CG-9" })],
         });
         const { fs } = memRunsFs();
-        saveRecord(
-            "/runs",
-            {
-                agent: "claude",
-                cwd: "/wt/cg-5",
-                key: "CG-5",
-                jobKind: "implement",
-                repoPath: "/repo/bin",
-                runMode: "autonomous",
-                sessionName: "CG-5",
-                status: "in_progress",
-                updatedAt: "2026-01-01T00:00:00.000Z",
-            },
-            fs,
-        );
         const { driver } = fakeDriver();
         const logs: string[] = [];
         let consulted = 0;
@@ -1986,8 +2196,6 @@ describe("watch loop", () => {
         const tickErrors = logs.filter((m) => m.includes("tick errored") && m.includes("503"));
         expect(tickErrors.length).toBeGreaterThanOrEqual(2);
         expect(sleeps.length).toBeGreaterThanOrEqual(1);
-        // The record is never destroyed by a transient failure.
-        expect(loadRecord("/runs", "CG-5", fs)).not.toBeNull();
     });
 });
 

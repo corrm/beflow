@@ -19,6 +19,7 @@ import {
     buildInteractiveArgs,
     defaultOpenIssue,
     OPEN_SESSION_TRAILER,
+    projectKeyOf,
     resolveRun,
     runIssue,
     runOpen,
@@ -362,6 +363,22 @@ function capturingSink(): { sink: DecisionSink; events: DecisionEvent[] } {
     };
     return { events, sink };
 }
+
+describe("projectKeyOf", () => {
+    it("extracts the project key from a valid issue key", () => {
+        expect(projectKeyOf("PROJ-123")).toBe("PROJ");
+    });
+
+    it("handles multi-segment keys", () => {
+        expect(projectKeyOf("MY-PROJ-42")).toBe("MY-PROJ");
+    });
+
+    it("throws on a key without a dash", () => {
+        expect(() => projectKeyOf("NODESH")).toThrow(
+            /malformed issue key "NODESH"/,
+        );
+    });
+});
 
 describe("resolveRun", () => {
     it("throws on an unknown project key before any tracker call", async () => {

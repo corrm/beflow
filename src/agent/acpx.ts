@@ -1,3 +1,4 @@
+import { sleep } from "../utils.ts";
 import { spawn } from "bun";
 
 import type { AgentConfig, Config } from "../config/schema.ts";
@@ -116,11 +117,6 @@ export class BunProcessRunner implements ProcessRunner {
     }
 }
 
-async function realDelay(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
-}
 
 const MS_PER_SECOND = 1000;
 
@@ -132,7 +128,7 @@ export class AcpxDriver implements AgentDriver {
         opts: { runner?: ProcessRunner; command?: string[]; delay?: (ms: number) => Promise<void> } = {},
     ) {
         this.runner = opts.runner ?? new BunProcessRunner(opts.command);
-        this.delay = opts.delay ?? realDelay;
+        this.delay = opts.delay ?? sleep;
     }
 
     public async run(opts: RunOptions, onEvent?: (evt: unknown) => void): Promise<AgentRunResult> {

@@ -15,6 +15,7 @@ import type {
     RawWorkItemRelations,
     RawWorkItemType,
 } from "./types.ts";
+import { sleep } from "../../utils.ts";
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -44,23 +45,6 @@ interface ListWorkItemsOptions {
 const MAX_RETRIES = 2;
 const DEFAULT_BASE_URL = "https://api.plane.so";
 
-async function realSleep(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
-}
-
-// Deserialization trust boundary: the caller declares the response shape T.
-function hasShape<T>(_value: unknown): _value is T {
-    return true;
-}
-
-function decodeBody<T>(value: unknown): T {
-    if (!hasShape<T>(value)) {
-        throw new Error("plane: response body did not match expected shape");
-    }
-    return value;
-}
 
 export class PlaneClient {
     private readonly baseUrl: string;
@@ -74,7 +58,7 @@ export class PlaneClient {
         this.slug = options.workspaceSlug;
         this.apiKey = options.apiKey;
         this.fetch = options.fetch ?? (globalThis.fetch as FetchLike);
-        this.sleep = options.sleep ?? realSleep;
+        this.sleep = options.sleep ?? sleep;
     }
 
     private headers(): Record<string, string> {
@@ -113,14 +97,14 @@ export class PlaneClient {
             }
 
             if (response.status === 204) {
-                return decodeBody<T>(undefined);
+                return undefined as T;
             }
             const text = await response.text();
             if (text === "") {
-                return decodeBody<T>(undefined);
+                return undefined as T;
             }
             const parsed: unknown = JSON.parse(text);
-            return decodeBody<T>(parsed);
+            return parsed as T;
         }
     }
 

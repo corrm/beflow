@@ -21,12 +21,7 @@ export interface ResolveInputs {
 }
 
 export function cascade<T>(...candidates: (T | undefined)[]): T | undefined {
-    for (const candidate of candidates) {
-        if (candidate !== undefined) {
-            return candidate;
-        }
-    }
-    return undefined;
+    return candidates.find((c) => c !== undefined);
 }
 
 const AGENT_BUILTIN = "claude";

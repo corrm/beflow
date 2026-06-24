@@ -1,3 +1,4 @@
+import { sleep } from "../utils.ts";
 import { existsSync } from "node:fs";
 
 import { cancel, intro, isCancel, outro, select, text } from "@clack/prompts";
@@ -56,7 +57,7 @@ import type { Exec } from "./worktree.ts";
 import { applyReport, buildCommentBody, defaultDoneState } from "./writeback.ts";
 import type { WritebackResult } from "./writeback.ts";
 
-const IN_PROGRESS_STATE = "In Progress";
+export const IN_PROGRESS_STATE = "In Progress";
 const DEFAULT_MANUAL_MOVE_POLL_MS = 15000;
 const SECONDS_PER_MINUTE = 60;
 
@@ -103,19 +104,13 @@ export function isPulledByHuman(issue: Issue): boolean {
     return issue.state.group !== "started";
 }
 
-async function realSleep(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-        setTimeout(resolve, ms);
-    });
-}
-
 export interface ResolvedRun {
     issue: Issue;
     project: Project;
     resolved: Resolved;
 }
 
-function projectKeyOf(issueKey: string): string {
+export function projectKeyOf(issueKey: string): string {
     const dash = issueKey.lastIndexOf("-");
     if (dash === -1) {
         throw new Error(`beflow: malformed issue key "${issueKey}"`);
@@ -597,7 +592,7 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
               ? `Resuming work item ${key}; you have prior context in this session — continue from where you left off and finish, then emit the report block.\n\n${baseTask}`
               : baseTask;
 
-    const sleep = deps.sleep ?? realSleep;
+    const effectiveSleep = deps.sleep ?? sleep;
     const pollMs = deps.manualMovePollMs ?? DEFAULT_MANUAL_MOVE_POLL_MS;
     const poller =
         deps.config.onManualMove === "abort"
@@ -608,7 +603,7 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
                   key,
                   log,
                   pollMs,
-                  sleep,
+                  sleep: effectiveSleep,
                   tracker: deps.tracker,
               })
             : undefined;

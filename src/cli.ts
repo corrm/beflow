@@ -42,7 +42,7 @@ import { queueView } from "./core/queue.ts";
 import type { QueueRow } from "./core/queue.ts";
 import { runReview } from "./core/review.ts";
 import type { RunReviewDeps } from "./core/review.ts";
-import { defaultOpenIssue, resolveRun, runIssue, runOpen, runSupervised } from "./core/run.ts";
+import { defaultOpenIssue, projectKeyOf, resolveRun, runIssue, runOpen, runSupervised } from "./core/run.ts";
 import type { OpenIssue, ResolvedRun, RunIssueDeps, RunOpenDeps, RunSupervisedDeps } from "./core/run.ts";
 import { listRecords, loadRecord, resolveRunsDir } from "./core/runstore.ts";
 import type { RunStoreFs } from "./core/runstore.ts";
@@ -109,16 +109,7 @@ function notifyFormat(): NotifyFormat | undefined {
 }
 
 function onPathDefault(cmd: string): boolean {
-    const pathEnv = process.env.PATH ?? "";
-    for (const dir of pathEnv.split(":")) {
-        if (dir === "") {
-            continue;
-        }
-        if (existsSync(join(dir, cmd))) {
-            return true;
-        }
-    }
-    return false;
+    return Bun.spawnSync(["sh", "-c", `command -v ${cmd} >/dev/null 2>&1`]).exitCode === 0;
 }
 
 async function defaultPing(config: Config, registry: Registry): Promise<string> {
@@ -1118,10 +1109,6 @@ function colWidth(cells: Record<string, string>[], key: string, header: string):
     return cells.reduce((w, c) => Math.max(w, (c[key] ?? "").length), header.length);
 }
 
-function projectKeyOf(issueKey: string): string {
-    const dash = issueKey.lastIndexOf("-");
-    return dash === -1 ? issueKey : issueKey.slice(0, dash);
-}
 
 if (import.meta.main) {
     void runCli(process.argv.slice(2), defaultCliDeps()).then((code) => {

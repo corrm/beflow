@@ -8,7 +8,7 @@ import type { Config, Registry } from "../config/schema.ts";
 import type { Tracker } from "../trackers/tracker.ts";
 import type { PromptSet } from "./prompts.ts";
 import { renderReviewContract } from "./prompts.ts";
-import { resolveRun } from "./run.ts";
+import { resolveRun, projectKeyOf } from "./run.ts";
 import type { Logger, ResolvedRun } from "./run.ts";
 import { loadRecord, resolveRunsDir, saveRecord, systemClock } from "./runstore.ts";
 import type { Clock, RunStoreFs } from "./runstore.ts";
@@ -78,13 +78,6 @@ export function resolveReviewPostToPr(config: Config, registry: Registry, projec
     return registry.projects[projectKey]?.review?.postToPr ?? config.review?.postToPr ?? false;
 }
 
-function projectKeyOf(issueKey: string): string {
-    const dash = issueKey.lastIndexOf("-");
-    if (dash === -1) {
-        throw new Error(`beflow: malformed issue key "${issueKey}"`);
-    }
-    return issueKey.slice(0, dash);
-}
 
 const SEVERITY_RANK: Record<ReviewFinding["severity"], number> = { blocker: 0, major: 1, minor: 2, nit: 3 };
 

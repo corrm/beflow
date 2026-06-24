@@ -14,7 +14,7 @@ import type { Notifier } from "./notify.ts";
 import type { PromptSet } from "./prompts.ts";
 import { defaultPrComment, resolveReviewEnabled, resolveReviewPostToPr, runReview } from "./review.ts";
 import type { PrCommenter, RunReviewDeps } from "./review.ts";
-import { isPulledByHuman, runIssue } from "./run.ts";
+import { isPulledByHuman, IN_PROGRESS_STATE, runIssue } from "./run.ts";
 import type { Logger, RunIssueDeps } from "./run.ts";
 import { deleteRecord, listRecords, loadRecord, resolveRunsDir, saveRecord, systemClock } from "./runstore.ts";
 import type { Clock, RunRecord, RunStoreFs } from "./runstore.ts";
@@ -22,7 +22,6 @@ import { ageMinutes, formatAge, resolveSla, shouldRemind } from "./sla.ts";
 import { bunExec, removeWorktree } from "./worktree.ts";
 import type { Exec } from "./worktree.ts";
 
-const IN_PROGRESS_STATE = "In Progress";
 const DONE_STATE = "Done";
 const CHANGES_REQUESTED_LABEL = "changes-requested";
 const BLOCKED_LABEL = "blocked";

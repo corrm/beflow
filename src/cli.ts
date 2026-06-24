@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 
 import { defineCommand, runCommand, showUsage } from "citty";
 import type { ArgsDef, CommandDef } from "citty";
@@ -1108,7 +1108,6 @@ function printQueue(rows: QueueRow[], log: (msg: string) => void, filter?: strin
 function colWidth(cells: Record<string, string>[], key: string, header: string): number {
     return cells.reduce((w, c) => Math.max(w, (c[key] ?? "").length), header.length);
 }
-
 
 if (import.meta.main) {
     void runCli(process.argv.slice(2), defaultCliDeps()).then((code) => {

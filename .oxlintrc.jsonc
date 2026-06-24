@@ -11,6 +11,9 @@
     "typeAware": true,
     "typeCheck": true,
   },
+  "globals": {
+    "Bun": "readonly",
+  },
   "env": {
     "builtin": true,
     "browser": false,

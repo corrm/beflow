@@ -1,4 +1,3 @@
-import { sleep } from "../utils.ts";
 import { existsSync } from "node:fs";
 
 import { cancel, intro, isCancel, outro, select, text } from "@clack/prompts";
@@ -12,6 +11,7 @@ import type { Config, Project, Registry } from "../config/schema.ts";
 import type { Issue, JobKind, Resolved } from "../model/types.ts";
 import { resolve, resolvePolicy, resolvePr } from "../resolve/precedence.ts";
 import type { Comment, Tracker } from "../trackers/tracker.ts";
+import { sleep } from "../utils.ts";
 import { renderContinuation } from "./continuation.ts";
 import { TrackerCommentSink } from "./decision-receipt.ts";
 import { DECISION_HOLD_MESSAGE, isDecisionHeld } from "./decision.ts";

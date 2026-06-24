@@ -78,7 +78,6 @@ export function resolveReviewPostToPr(config: Config, registry: Registry, projec
     return registry.projects[projectKey]?.review?.postToPr ?? config.review?.postToPr ?? false;
 }
 
-
 const SEVERITY_RANK: Record<ReviewFinding["severity"], number> = { blocker: 0, major: 1, minor: 2, nit: 3 };
 
 function formatReviewBody(report: ReviewReport): string {

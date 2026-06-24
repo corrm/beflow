@@ -1,3 +1,4 @@
+import { sleep } from "../../utils.ts";
 import type {
     Paginated,
     RawAttachment,
@@ -15,7 +16,18 @@ import type {
     RawWorkItemRelations,
     RawWorkItemType,
 } from "./types.ts";
-import { sleep } from "../../utils.ts";
+
+// Deserialization trust boundary: the caller declares the response shape T.
+function hasShape<T>(_value: unknown): _value is T {
+    return true;
+}
+
+function decodeBody<T>(value: unknown): T {
+    if (!hasShape<T>(value)) {
+        throw new Error("plane: response body did not match expected shape");
+    }
+    return value;
+}
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -44,7 +56,6 @@ interface ListWorkItemsOptions {
 
 const MAX_RETRIES = 2;
 const DEFAULT_BASE_URL = "https://api.plane.so";
-
 
 export class PlaneClient {
     private readonly baseUrl: string;
@@ -97,14 +108,14 @@ export class PlaneClient {
             }
 
             if (response.status === 204) {
-                return undefined as T;
+                return decodeBody<T>(undefined);
             }
             const text = await response.text();
             if (text === "") {
-                return undefined as T;
+                return decodeBody<T>(undefined);
             }
             const parsed: unknown = JSON.parse(text);
-            return parsed as T;
+            return decodeBody<T>(parsed);
         }
     }
 

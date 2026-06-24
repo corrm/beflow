@@ -1,7 +1,7 @@
-import { sleep } from "../utils.ts";
 import { spawn } from "bun";
 
 import type { AgentConfig, Config } from "../config/schema.ts";
+import { sleep } from "../utils.ts";
 import type { AgentDriver, AgentRunResult, RunOptions } from "./driver.ts";
 import { parseAcpLine, reduceAcpStream } from "./events.ts";
 import { extractReport } from "./report.ts";
@@ -116,7 +116,6 @@ export class BunProcessRunner implements ProcessRunner {
         };
     }
 }
-
 
 const MS_PER_SECOND = 1000;
 

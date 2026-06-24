@@ -374,9 +374,7 @@ describe("projectKeyOf", () => {
     });
 
     it("throws on a key without a dash", () => {
-        expect(() => projectKeyOf("NODESH")).toThrow(
-            /malformed issue key "NODESH"/,
-        );
+        expect(() => projectKeyOf("NODESH")).toThrow(/malformed issue key "NODESH"/);
     });
 });
 

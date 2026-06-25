@@ -1,8 +1,8 @@
 # Advisor
 
-> **Status: v1 shipped (opt-in, `--auto` only).** The between-turn deputy loop
-> — review each agent turn, correct on drift, escalate after `maxNudges` — is
-> implemented for autonomous runs. The later phases (mid-run cancel, the `--open`
+> **Status: v1 shipped (opt-in, `--auto` only).** The between-run deputy loop
+> — after each agent run, review the committed work, correct on drift, escalate
+> after `maxNudges` — is implemented for autonomous runs. The later phases (mid-run cancel, the `--open`
 > close review, the multi-lens panel, and "learns you") are roadmap, not built;
 > see _Rollout_.
 
@@ -48,7 +48,7 @@ with a correction_ — that is exactly how `changes-requested` rework works
 (`renderContinuation` + the rework loop in `src/core/run.ts`). The deputy slots
 into that loop as a second checker, alongside the quality gate:
 
-1. The agent finishes a turn and commits.
+1. The agent finishes its run and commits.
 2. The deputy reviews the committed diff against the ticket's contract.
 3. Routing by severity:
    - `aside` → recorded on the run, no action.
@@ -88,7 +88,7 @@ keep this from dragging a good run sideways:
 
 | Mode       | Deputy behavior                                                                                                                                                                                                                                            |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--auto`   | Full loop: review after each turn, re-dispatch on drift, escalate on `maxNudges`/unsafe. This is where the blind spot hurts most (no human watching).                                                                                                      |
+| `--auto`   | Full loop: review after each agent run (between runs, never mid-run), re-dispatch on drift, escalate on `maxNudges`/unsafe. This is where the blind spot hurts most (no human watching).                                                                   |
 | `--attend` | Same loop; its findings land next to your live approval prompts.                                                                                                                                                                                           |
 | `--open`   | The agent runs in its own TUI (beflow can't see its turns). The deputy runs **once at session close**, over the final diff. No turn to re-dispatch — a `concern` becomes a PR-body note, a `blocker` holds the item out of In Review. Forced when enabled. |
 

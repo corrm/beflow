@@ -141,8 +141,9 @@ configuration reference and policy examples.
 ## Advisor — a second model on watch
 
 Turn on the **advisor** and a second model — the _deputy_, on its own context —
-reviews each agent turn in `--auto` against the ticket's contract. When the agent
-drifts, the deputy re-dispatches it with a correction and the run carries on; if
+reviews the agent's committed work after each `--auto` run against the ticket's
+contract — between runs, never mid-run. When the agent drifts, the deputy
+re-dispatches it with a correction and the run carries on; if
 the agent keeps ignoring the correction, or does something unsafe, the deputy
 parks the item in **Needs Input** with one plain-English reason. It's the
 captain's stand-in — catch a wrong-direction run early, before it reaches your

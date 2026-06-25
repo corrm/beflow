@@ -135,6 +135,9 @@ beflow accept APP <intake-item-id>
 Run an agent-driven review over a work item's open PR and post the findings as a
 comment. Read-only on the board — never merges or changes state.
 
+This reviews a **finished PR** for you. For the in-run check that steers the agent
+_while it works_, see [Advisor vs the review gate](advisor.md#advisor-vs-the-review-gate).
+
 ```bash
 beflow review APP-42
 ```

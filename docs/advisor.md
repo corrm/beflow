@@ -35,6 +35,36 @@ change ever reaches your review queue.
 
 ---
 
+## Advisor vs the review gate
+
+beflow has two model-driven checks on agent work, at **opposite ends** of the
+pipeline. They are complementary, not alternatives — the advisor keeps a run on
+course so that by the time the [`review`](commands.md#review-key) gate looks at
+the PR, there is less wrong with it.
+
+|              | **Advisor** (this doc)                                   | **Review gate** (`beflow review`, `src/core/review.ts`) |
+| ------------ | -------------------------------------------------------- | ------------------------------------------------------- |
+| When         | _During_ the work — between agent runs, before the PR    | _After_ the PR is open (item in **In Review**)          |
+| Reviews      | Work in progress, against the ticket's contract          | The finished PR diff                                    |
+| Output       | Corrections fed back to the **agent**; escalation to you | Findings posted as comments for **you**                 |
+| Audience     | The agent itself                                         | The human reviewer                                      |
+| Goal         | Stop wrong-direction work before it is "done"            | Catch issues in work that is already done               |
+| Report block | `beflow-advisor`                                         | `beflow-review`                                         |
+
+**When to use each**
+
+- **Advisor** — turn it on for autonomous (`--auto`) runs you are not watching,
+  where an agent can drift for a whole run before anyone notices. It earns its
+  keep by killing wrong-direction work early, before it costs you a PR review.
+- **Review gate** — use it for a human-style code review of a finished PR: run
+  `beflow review <key>`, or enable the `review` gate so `watch` runs it. It judges
+  done work; it does not steer the agent mid-flight.
+
+Run both. The advisor reduces how often the review gate (and you) find something
+wrong, because the worst drift never reaches the PR.
+
+---
+
 ## How it works
 
 beflow drives the agent as **one acpx prompt that runs to completion**

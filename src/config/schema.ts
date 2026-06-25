@@ -20,6 +20,19 @@ export const prSchema = z
     })
     .optional();
 
+export const advisorSeveritySchema = z.enum(["aside", "concern", "blocker"]);
+
+export const advisorSchema = z
+    .object({
+        enabled: z.boolean().default(false),
+        agents: z.array(z.string()).optional(),
+        maxNudges: z.number().int().min(0).optional(),
+    })
+    .optional();
+
+export type AdvisorConfig = z.infer<typeof advisorSchema>;
+export type AdvisorSeverity = z.infer<typeof advisorSeveritySchema>;
+
 export const policyEvaluatorSchema = z.enum(["globs", "command", "agentowners", "off"]);
 export const policyDecisionSchema = z.enum(["block", "require_approval", "allow"]);
 export const policyOnBlockSchema = z.enum(["comment"]);
@@ -193,6 +206,12 @@ export const fileSchema = z.object({
     // Translated servers as a managed `.acpxrc.json` into the agent cwd for
     // Acpx-driven runs (`--auto`/`watch`/`--attend`). Disabled by default.
     mcp: z.object({ enabled: z.boolean().default(false) }).optional(),
+    // Opt-in advisor (the "deputy"): after each agent turn in `--auto`, a second
+    // Model reviews the committed work against the contract and either records an
+    // Aside, re-dispatches with a correction (concern), or escalates to Needs Input
+    // (blocker, or a concern that survives `maxNudges`). `agents` names config.agents
+    // Entries (v1 uses the first); off by default.
+    advisor: advisorSchema,
     // Where `--auto` runs persist their per-issue run-records so an interrupted
     // Run can resume. `~` expands to home; defaults to $XDG_STATE_HOME/beflow/runs
     // (fallback ~/.local/state/beflow/runs).

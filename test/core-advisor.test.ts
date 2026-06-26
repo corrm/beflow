@@ -342,4 +342,33 @@ describe("advisor wiring", () => {
             true,
         );
     });
+
+    it("enabled with an agent absent from config.agents: skips cleanly, no throw, → In Review", async () => {
+        const tracker = new FakeTracker(implementIssue());
+        const { driver, doerRuns, advisorRuns } = keyedDriver([verdictText("blocker", "should never run")]);
+        const result = await runIssue(
+            "CG-42",
+            {},
+            deps({ config: baseConfig({ agents: ["ghost"], enabled: true }), driver, tracker }),
+        );
+
+        expect(doerRuns).toHaveLength(1);
+        expect(advisorRuns).toHaveLength(0);
+        expect(result.applied).toEqual({ movedTo: "In Review" });
+        expect(tracker.states).toContain("In Review");
+    });
+
+    it("enabled with an empty agents list: skips cleanly, no throw, → In Review", async () => {
+        const tracker = new FakeTracker(implementIssue());
+        const { driver, doerRuns, advisorRuns } = keyedDriver([verdictText("blocker", "should never run")]);
+        const result = await runIssue(
+            "CG-42",
+            {},
+            deps({ config: baseConfig({ agents: [], enabled: true }), driver, tracker }),
+        );
+
+        expect(doerRuns).toHaveLength(1);
+        expect(advisorRuns).toHaveLength(0);
+        expect(result.applied).toEqual({ movedTo: "In Review" });
+    });
 });

@@ -207,7 +207,7 @@ export const fileSchema = z.object({
     // Acpx-driven runs (`--auto`/`watch`/`--attend`). Disabled by default.
     mcp: z.object({ enabled: z.boolean().default(false) }).optional(),
     // Opt-in advisor (the "deputy"): after each agent turn in `--auto`, a second
-    // Model reviews the committed work against the contract and either records an
+    // Model reviews the committed work against the contract and either logs an
     // Aside, re-dispatches with a correction (concern), or escalates to Needs Input
     // (blocker, or a concern that survives `maxNudges`). `agents` names config.agents
     // Entries (v1 uses the first); off by default.

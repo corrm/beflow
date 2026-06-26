@@ -81,12 +81,12 @@ into that loop as a second checker, alongside the quality gate:
 1. The agent finishes its run and commits.
 2. The deputy reviews the committed diff against the ticket's contract.
 3. Routing by severity:
-   - `aside` → recorded on the run, no action.
+   - `aside` → logged, no action.
    - `concern` → **re-dispatch the agent** with the correction as a continuation
      (the same path as a `changes-requested` rework), and loop.
    - `blocker` → **escalate** to Needs Input with the deputy's one-sentence reason.
-4. If the same concern survives `maxNudges` re-dispatches, it is promoted to a
-   blocker and escalated — the deputy stops re-dispatching an agent that won't
+4. If a concern is still raised after `maxNudges` re-dispatches, it is promoted to
+   a blocker and escalated — the deputy stops re-dispatching an agent that won't
    listen.
 
 The deputy is itself an agent from `config.agents`, invoked **read-only on its own
@@ -130,8 +130,8 @@ keep this from dragging a good run sideways:
 
 | Severity  | `--auto` / `--attend`                                            | `--open` (close review)                  |
 | --------- | ---------------------------------------------------------------- | ---------------------------------------- |
-| `aside`   | record on the run                                                | record on the run                        |
-| `concern` | **re-dispatch** the agent with the correction; record → PR body  | note in PR body                          |
+| `aside`   | logged on the run                                                | record on the run                        |
+| `concern` | **re-dispatch** the agent with the correction                    | note in PR body                          |
 | `blocker` | **escalate** → Needs Input with the deputy's one-sentence reason | hold item out of In Review → Needs Input |
 
 A `concern` that survives `maxNudges` re-dispatches is promoted to a `blocker`.
@@ -182,7 +182,8 @@ shape of existing opt-in blocks (`mcp`, `policy`) across `src/config/schema.ts`
 v1's rubric is fixed (the rendered jobKind contract) and the severity → action
 mapping is fixed (the table above). `rubric`, `severityActions`, `modes`, and a
 per-run `budget` are deferred to later phases (see _Rollout_) — until they are
-honored they are not config, so they are not accepted.
+honored, setting them has no effect: `config.schema.json` flags them and the
+loader ignores them.
 
 > **Cost note.** Each review is a full acpx session, and each correction is a full
 > agent re-run. A run that nudges 3× costs roughly one main run + three deputy

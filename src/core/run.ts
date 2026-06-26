@@ -723,7 +723,6 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
     const advisorAgent = advisorCfg?.agents?.[0];
     if (
         advisorCfg?.enabled === true &&
-        advisorAgent !== undefined &&
         effectiveRunMode === "autonomous" &&
         effectiveJobKind === "implement" &&
         useWorktree &&
@@ -731,72 +730,82 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
         git !== undefined &&
         result.report?.status === "done"
     ) {
-        const advisorAcpCommand = resolveAcpCommand(advisorAgent, deps.config.agents[advisorAgent]);
-        const advisorSession = `${key}-advisor`;
-        const maxNudges = advisorCfg.maxNudges ?? DEFAULT_ADVISOR_MAX_NUDGES;
-        const contract = renderContract(deps.prompts, effectiveJobKind, issue, resolved.repo, beflowOwned);
-        const advisorExec = deps.prExec ?? bunExec;
-        const base = await detectBaseBranch(resolved.repo, resolvedPr.baseBranch, advisorExec);
-
-        async function escalateAdvisor(verdict: AdvisorVerdict): Promise<RunResult> {
-            const report: Report = { status: "needs_input", summary: verdict.note };
-            const applied = await applyReport(deps.tracker, issue, report, effectiveJobKind);
-            saveRecord(runsDir, { ...record, report, status: "needs_input", updatedAt: clock() }, deps.runsFs);
-            await notifyEscalation(deps.notify, issue, "needs_input", verdict.note);
-            log(`beflow: ${key} — advisor escalated (${verdict.severity}): ${verdict.note}`);
-            return { applied, cwd, issue, resolved, result: { ...result, report } };
-        }
-
-        let nudges = 0;
-        for (;;) {
-            const verdict = await reviewWork({
-                acpCommand: advisorAcpCommand,
-                contract,
-                cwd,
-                diff: await advisorDiff(cwd, base, advisorExec),
-                driver: deps.driver,
-                sessionKey: advisorSession,
-            });
-            if (verdict === null || verdict.severity === "aside") {
-                if (verdict !== null) {
-                    log(`beflow: ${key} — advisor aside: ${verdict.note}`);
-                }
-                break;
-            }
-            if (verdict.severity === "blocker" || nudges >= maxNudges) {
-                return await escalateAdvisor(verdict);
-            }
-
-            nudges += 1;
-            log(`beflow: ${key} — advisor concern (nudge ${String(nudges)}/${String(maxNudges)}): ${verdict.note}`);
-            const correction: Comment = {
-                body: `A reviewer flagged this concern — address it and re-emit the report block:\n${verdict.note}`,
-                createdAt: clock(),
-                id: "advisor",
-                isBot: false,
-            };
-            const reworkTask = renderContinuation(
-                deps.prompts,
-                {
-                    newComments: [correction],
-                    priorReport: result.report,
-                    ...(result.report.prUrl !== undefined ? { prUrl: result.report.prUrl } : {}),
-                },
-                beflowOwned,
+        // A missing/empty `agents` or a name absent from config.agents is a misconfig,
+        // Not a crash: warn and skip the review rather than throwing post-commit and
+        // Stranding committed work In Progress.
+        const advisorAgentCfg = advisorAgent !== undefined ? deps.config.agents[advisorAgent] : undefined;
+        if (advisorAgent === undefined || advisorAgentCfg === undefined) {
+            log(
+                `beflow: ${key} — advisor enabled but no usable agent (${advisorAgent ?? "none set"}) in config.agents; skipping advisor`,
             );
-            result = await deps.driver.run(buildRunOptions(reworkTask), (evt) => {
-                log(`acpx: ${JSON.stringify(evt)}`);
-            });
-            if (result.report === null) {
-                // The agent produced nothing in response to the deputy's correction —
-                // Escalate rather than silently leaving committed, unreviewed work In Progress.
-                return await escalateAdvisor({
-                    note: "Agent emitted no report after an advisor correction — parking for review.",
-                    severity: "concern",
-                });
+        } else {
+            const advisorAcpCommand = resolveAcpCommand(advisorAgent, advisorAgentCfg);
+            const advisorSession = `${key}-advisor`;
+            const maxNudges = advisorCfg.maxNudges ?? DEFAULT_ADVISOR_MAX_NUDGES;
+            const contract = renderContract(deps.prompts, effectiveJobKind, issue, resolved.repo, beflowOwned);
+            const advisorExec = deps.prExec ?? bunExec;
+            const base = await detectBaseBranch(resolved.repo, resolvedPr.baseBranch, advisorExec);
+
+            async function escalateAdvisor(verdict: AdvisorVerdict): Promise<RunResult> {
+                const report: Report = { status: "needs_input", summary: verdict.note };
+                const applied = await applyReport(deps.tracker, issue, report, effectiveJobKind);
+                saveRecord(runsDir, { ...record, report, status: "needs_input", updatedAt: clock() }, deps.runsFs);
+                await notifyEscalation(deps.notify, issue, "needs_input", verdict.note);
+                log(`beflow: ${key} — advisor escalated (${verdict.severity}): ${verdict.note}`);
+                return { applied, cwd, issue, resolved, result: { ...result, report } };
             }
-            if (result.report.status !== "done") {
-                break; // a real needs_input/blocked/failed report routes through writeback as usual
+
+            let nudges = 0;
+            for (;;) {
+                const verdict = await reviewWork({
+                    acpCommand: advisorAcpCommand,
+                    contract,
+                    cwd,
+                    diff: await advisorDiff(cwd, base, advisorExec),
+                    driver: deps.driver,
+                    sessionKey: advisorSession,
+                });
+                if (verdict === null || verdict.severity === "aside") {
+                    if (verdict !== null) {
+                        log(`beflow: ${key} — advisor aside: ${verdict.note}`);
+                    }
+                    break;
+                }
+                if (verdict.severity === "blocker" || nudges >= maxNudges) {
+                    return await escalateAdvisor(verdict);
+                }
+
+                nudges += 1;
+                log(`beflow: ${key} — advisor concern (nudge ${String(nudges)}/${String(maxNudges)}): ${verdict.note}`);
+                const correction: Comment = {
+                    body: `A reviewer flagged this concern — address it and re-emit the report block:\n${verdict.note}`,
+                    createdAt: clock(),
+                    id: "advisor",
+                    isBot: false,
+                };
+                const reworkTask = renderContinuation(
+                    deps.prompts,
+                    {
+                        newComments: [correction],
+                        priorReport: result.report,
+                        ...(result.report.prUrl !== undefined ? { prUrl: result.report.prUrl } : {}),
+                    },
+                    beflowOwned,
+                );
+                result = await deps.driver.run(buildRunOptions(reworkTask), (evt) => {
+                    log(`acpx: ${JSON.stringify(evt)}`);
+                });
+                if (result.report === null) {
+                    // The agent produced nothing in response to the deputy's correction —
+                    // Escalate rather than silently leaving committed, unreviewed work In Progress.
+                    return await escalateAdvisor({
+                        note: "Agent emitted no report after an advisor correction — parking for review.",
+                        severity: "concern",
+                    });
+                }
+                if (result.report.status !== "done") {
+                    break; // a real needs_input/blocked/failed report routes through writeback as usual
+                }
             }
         }
     }

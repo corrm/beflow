@@ -138,6 +138,17 @@ flowchart TD
 See [PR ownership and policy](docs/pr-ownership-and-policy.md) for the full
 configuration reference and policy examples.
 
+## Advisor — a second model on watch
+
+Turn on the **advisor** and a second model — the _deputy_, on its own context —
+reviews the agent's committed work after each `--auto` run against the ticket's
+contract — between runs, never mid-run. When the agent drifts, the deputy
+re-dispatches it with a correction and the run carries on; if
+the agent keeps ignoring the correction, or does something unsafe, the deputy
+parks the item in **Needs Input** with one plain-English reason. It's the
+captain's stand-in — catch a wrong-direction run early, before it reaches your
+review queue. Opt-in and off by default — see [Advisor](docs/advisor.md).
+
 ## The board is the control center
 
 beflow drives a simple board and you steer from it:
@@ -204,7 +215,7 @@ A project maps a key to a tracker project and the local repos its work lands in:
 ```
 
 Every key — per-project overrides, agent definitions, and the opt-in gates
-(dead-letter, quality gate, SLA, CI rework, review) — is documented in the
+(dead-letter, quality gate, SLA, CI rework, review, advisor) — is documented in the
 **[config reference](docs/config.md)**. API keys are set in your shell profile,
 never in `config.json`.
 
@@ -213,6 +224,7 @@ never in `config.json`.
 - [Command reference](docs/commands.md) — every command and flag
 - [Config reference](docs/config.md) — every `config.json` setting
 - [PR ownership and policy](docs/pr-ownership-and-policy.md) — beflow-owned PR creation, post-run policy gating
+- [Advisor](docs/advisor.md) — the opt-in deputy that reviews `--auto` runs and corrects drift
 - [Design](docs/DESIGN.md) — architecture and the run pipeline
 - [Lifecycle](docs/lifecycle.md) — the board as the control center
 - [Operating model](docs/OPERATING-MODEL.md) — the queue-based workflow

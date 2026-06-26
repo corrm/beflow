@@ -108,7 +108,9 @@ stages in `src/core/run.ts`:
 5. **Run the agent** — invoke acpx (or the native TUI for `--open`). The agent
    receives a rendered task + linked context and a jobKind contract injected as a
    system-prompt append. It returns a structured report via the NDJSON event
-   stream.
+   stream. When the opt-in **advisor** is enabled for `--auto`, a deputy model
+   reviews the committed result against the ticket and re-dispatches corrections
+   before write-back — see [`advisor.md`](advisor.md).
 6. **Write back** — `applyReport` maps the report status to a board move, posts a
    comment, links the PR, and optionally appends a telemetry line (token/cost
    summary, opt-in per project). If a human moved the card during the run, beflow

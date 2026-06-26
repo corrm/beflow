@@ -28,6 +28,11 @@
       }
     ]
   },
+  "advisor": {
+    "enabled": false,
+    "agents": ["claude"],
+    "maxNudges": 3
+  },
   "worktrees": {
     "dir": "~/.beflow/worktrees"
   },

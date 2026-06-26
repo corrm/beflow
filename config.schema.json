@@ -185,6 +185,26 @@
           },
           "additionalProperties": false
         },
+        "advisor": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "agents": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "maxNudges": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
         "runs": {
           "type": "object",
           "properties": {

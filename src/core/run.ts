@@ -4,6 +4,8 @@ import { cancel, intro, isCancel, outro, select, text } from "@clack/prompts";
 import * as bun from "bun";
 
 import { resolveAcpCommand, resolveAcpxCommand } from "../agent/acpx.ts";
+import { reviewWork } from "../agent/advisor.ts";
+import type { AdvisorVerdict } from "../agent/advisor.ts";
 import type { AgentDriver, AgentRunResult, RunOptions } from "../agent/driver.ts";
 import type { Report, ReportStatus } from "../agent/report.ts";
 import { assertKnownProject } from "../config/registry.ts";
@@ -326,6 +328,16 @@ export interface RunResult {
     result: AgentRunResult;
     applied?: WritebackResult;
     parked?: "decision" | "thin" | "preflight";
+}
+
+const DEFAULT_ADVISOR_MAX_NUDGES = 3;
+
+// The committed diff the deputy reviews, as text (three-dot form, isolating the
+// run's own changes from `base`). Empty string on a git failure so the deputy
+// degrades to "no diff to review" rather than breaking the run.
+async function advisorDiff(cwd: string, base: string, runGit: Exec): Promise<string> {
+    const out = await runGit("git", ["-C", cwd, "diff", `${base}...HEAD`]);
+    return out.code === 0 ? out.stdout : "";
 }
 
 export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIssueDeps): Promise<RunResult> {
@@ -699,6 +711,103 @@ export async function runIssue(key: string, cli: Partial<Resolved>, deps: RunIss
     });
     if (yielded) {
         return { applied: undefined, cwd, issue, resolved, result };
+    }
+
+    // ADVISOR (opt-in, `--auto` only): the deputy reviews the agent's committed
+    // Work against the contract and routes by severity — aside records, concern
+    // Re-dispatches the same agent session with the correction (a nudge counter
+    // Separate from maxRework), blocker (or a concern past `maxNudges`) escalates to
+    // Needs Input. A no-op unless enabled on an autonomous implement run with a
+    // Worktree branch + git and a `done` report — when a committed diff exists.
+    const advisorCfg = deps.config.advisor;
+    const advisorAgent = advisorCfg?.agents?.[0];
+    if (
+        advisorCfg?.enabled === true &&
+        effectiveRunMode === "autonomous" &&
+        effectiveJobKind === "implement" &&
+        useWorktree &&
+        branch !== undefined &&
+        git !== undefined &&
+        result.report?.status === "done"
+    ) {
+        // A missing/empty `agents` or a name absent from config.agents is a misconfig,
+        // Not a crash: warn and skip the review rather than throwing post-commit and
+        // Stranding committed work In Progress.
+        const advisorAgentCfg = advisorAgent !== undefined ? deps.config.agents[advisorAgent] : undefined;
+        if (advisorAgent === undefined || advisorAgentCfg === undefined) {
+            log(
+                `beflow: ${key} — advisor enabled but no usable agent (${advisorAgent ?? "none set"}) in config.agents; skipping advisor`,
+            );
+        } else {
+            const advisorAcpCommand = resolveAcpCommand(advisorAgent, advisorAgentCfg);
+            const advisorSession = `${key}-advisor`;
+            const maxNudges = advisorCfg.maxNudges ?? DEFAULT_ADVISOR_MAX_NUDGES;
+            const contract = renderContract(deps.prompts, effectiveJobKind, issue, resolved.repo, beflowOwned);
+            const advisorExec = deps.prExec ?? bunExec;
+            const base = await detectBaseBranch(resolved.repo, resolvedPr.baseBranch, advisorExec);
+
+            async function escalateAdvisor(verdict: AdvisorVerdict): Promise<RunResult> {
+                const report: Report = { status: "needs_input", summary: verdict.note };
+                const applied = await applyReport(deps.tracker, issue, report, effectiveJobKind);
+                saveRecord(runsDir, { ...record, report, status: "needs_input", updatedAt: clock() }, deps.runsFs);
+                await notifyEscalation(deps.notify, issue, "needs_input", verdict.note);
+                log(`beflow: ${key} — advisor escalated (${verdict.severity}): ${verdict.note}`);
+                return { applied, cwd, issue, resolved, result: { ...result, report } };
+            }
+
+            let nudges = 0;
+            for (;;) {
+                const verdict = await reviewWork({
+                    acpCommand: advisorAcpCommand,
+                    contract,
+                    cwd,
+                    diff: await advisorDiff(cwd, base, advisorExec),
+                    driver: deps.driver,
+                    sessionKey: advisorSession,
+                });
+                if (verdict === null || verdict.severity === "aside") {
+                    if (verdict !== null) {
+                        log(`beflow: ${key} — advisor aside: ${verdict.note}`);
+                    }
+                    break;
+                }
+                if (verdict.severity === "blocker" || nudges >= maxNudges) {
+                    return await escalateAdvisor(verdict);
+                }
+
+                nudges += 1;
+                log(`beflow: ${key} — advisor concern (nudge ${String(nudges)}/${String(maxNudges)}): ${verdict.note}`);
+                const correction: Comment = {
+                    body: `A reviewer flagged this concern — address it and re-emit the report block:\n${verdict.note}`,
+                    createdAt: clock(),
+                    id: "advisor",
+                    isBot: false,
+                };
+                const reworkTask = renderContinuation(
+                    deps.prompts,
+                    {
+                        newComments: [correction],
+                        priorReport: result.report,
+                        ...(result.report.prUrl !== undefined ? { prUrl: result.report.prUrl } : {}),
+                    },
+                    beflowOwned,
+                );
+                result = await deps.driver.run(buildRunOptions(reworkTask), (evt) => {
+                    log(`acpx: ${JSON.stringify(evt)}`);
+                });
+                if (result.report === null) {
+                    // The agent produced nothing in response to the deputy's correction —
+                    // Escalate rather than silently leaving committed, unreviewed work In Progress.
+                    return await escalateAdvisor({
+                        note: "Agent emitted no report after an advisor correction — parking for review.",
+                        severity: "concern",
+                    });
+                }
+                if (result.report.status !== "done") {
+                    break; // a real needs_input/blocked/failed report routes through writeback as usual
+                }
+            }
+        }
     }
 
     // TELEMETRY (opt-in): a compact token/cost line for the writeback comment,

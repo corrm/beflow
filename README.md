@@ -1,3 +1,5 @@
+
+
 # beflow
 
 **An AI-agent orchestration CLI for governed autonomy — drives your backlog to
@@ -52,8 +54,8 @@ flowchart LR
 
 - **[Bun](https://bun.sh)** ≥ 1.0 — beflow runs on the Bun runtime.
 - A **coding-agent CLI** that speaks [ACP](https://agentclientprotocol.com)
-  (e.g. `claude`) plus [`acpx`](https://www.npmjs.com/package/acpx) (fetched
-  automatically via `bunx`).
+  (e.g. `claude`) plus [`acpx`](https://www.npmjs.com/package/acpx) (default
+  `bunx acpx`, configurable under `tools.acpx`).
 - **`git`** and the **`gh`** CLI (for the PR step).
 - A **Plane** or **Linear** workspace and a personal API token.
 
